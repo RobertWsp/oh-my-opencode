@@ -424,7 +424,7 @@ export function createAtlasHook(
 
         // Read boulder state FIRST to check if this session is part of an active boulder
         const boulderState = readBoulderState(ctx.directory)
-        const isBoulderSession = boulderState?.session_ids.includes(sessionID) ?? false
+        const isBoulderSession = boulderState?.session_ids?.includes(sessionID) ?? false
 
         const mainSessionID = getMainSessionID()
         const isMainSession = sessionID === mainSessionID
@@ -652,7 +652,7 @@ export function createAtlasHook(
         if (boulderState) {
           const progress = getPlanProgress(boulderState.active_plan)
 
-          if (input.sessionID && !boulderState.session_ids.includes(input.sessionID)) {
+          if (input.sessionID && !boulderState?.session_ids?.includes(input.sessionID)) {
             appendSessionId(ctx.directory, input.sessionID)
             log(`[${HOOK_NAME}] Appended session to boulder`, {
               sessionID: input.sessionID,
