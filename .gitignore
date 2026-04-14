@@ -5,6 +5,7 @@ node_modules/
 
 # Build output
 dist/
+dist-v2/
 
 # Platform binaries (built, not committed)
 packages/*/bin/oh-my-opencode
