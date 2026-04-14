@@ -78,6 +78,16 @@ export function createChatMessageHandler(args: {
       firstMessageVariantGate.markApplied(input.sessionID)
     }
 
+    // Model router runs FIRST so the analyzer picks a tier before any
+    // fallback overrides it. Fallback hooks (which only kick in on prior
+    // errors) still take precedence: if they mutate output.message.model
+    // after us, that's the correct behavior (recovery > routing).
+    await hooks.modelRouter?.["chat.message"]?.(input, output)
+
+    // Feedback loop reads the router's decision from output.message._router
+    // and tracks outcome signals. Must run AFTER the router.
+    await hooks.feedbackLoop?.["chat.message"]?.(input, output)
+
     if (!isRuntimeFallbackEnabled) {
       await hooks.modelFallback?.["chat.message"]?.(input, output)
     }

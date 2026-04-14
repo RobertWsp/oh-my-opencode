@@ -14,6 +14,7 @@ import { GitMasterConfigSchema } from "./git-master"
 import { NotificationConfigSchema } from "./notification"
 import { RalphLoopConfigSchema } from "./ralph-loop"
 import { RuntimeFallbackConfigSchema } from "./runtime-fallback"
+import { ModelRouterConfigSchema } from "../../hooks/model-router/config"
 import { SkillsConfigSchema } from "./skills"
 import { SisyphusConfigSchema } from "./sisyphus"
 import { SisyphusAgentConfigSchema } from "./sisyphus-agent"
@@ -53,6 +54,12 @@ export const OhMyOpenCodeConfigSchema = z.object({
    * { "enabled": true, "retry_on_errors": [400, 429], "timeout_seconds": 30 }
    */
   runtime_fallback: z.union([z.boolean(), RuntimeFallbackConfigSchema]).optional(),
+  /**
+   * Intelligent model router (default: disabled). When enabled, analyzes
+   * each task and routes to haiku/sonnet/opus/opus-plan based on a
+   * deterministic decision matrix fed by a Sonnet 4.6 analyzer.
+   */
+  model_router: z.union([z.boolean(), ModelRouterConfigSchema]).optional(),
   background_task: BackgroundTaskConfigSchema.optional(),
   notification: NotificationConfigSchema.optional(),
   babysitting: BabysittingConfigSchema.optional(),

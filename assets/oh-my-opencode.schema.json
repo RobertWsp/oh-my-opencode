@@ -3651,6 +3651,134 @@
         }
       ]
     },
+    "model_router": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            },
+            "strategy": {
+              "default": "hybrid",
+              "type": "string",
+              "enum": [
+                "hybrid",
+                "rules_only",
+                "analyzer_only"
+              ]
+            },
+            "preScreen": {
+              "default": {
+                "enabled": true
+              },
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "default": true,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "enabled"
+              ],
+              "additionalProperties": false
+            },
+            "analyzer": {
+              "default": {
+                "providerID": "anthropic",
+                "modelID": "claude-sonnet-4-6",
+                "timeoutMs": 20000,
+                "cacheTtlMs": 86400000
+              },
+              "type": "object",
+              "properties": {
+                "providerID": {
+                  "default": "anthropic",
+                  "type": "string"
+                },
+                "modelID": {
+                  "default": "claude-sonnet-4-6",
+                  "type": "string"
+                },
+                "timeoutMs": {
+                  "default": 20000,
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "cacheTtlMs": {
+                  "default": 86400000,
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "providerID",
+                "modelID",
+                "timeoutMs",
+                "cacheTtlMs"
+              ],
+              "additionalProperties": false
+            },
+            "reanalyzeJaccardThreshold": {
+              "default": 0.2,
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "agentOverrides": {
+              "default": {},
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "enum": [
+                  "haiku",
+                  "sonnet",
+                  "opus",
+                  "opus-plan"
+                ]
+              }
+            },
+            "logDecisions": {
+              "default": true,
+              "type": "boolean"
+            },
+            "logPath": {
+              "type": "string"
+            },
+            "statusLine": {
+              "default": true,
+              "type": "boolean"
+            },
+            "feedbackLoop": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled",
+            "strategy",
+            "preScreen",
+            "analyzer",
+            "reanalyzeJaccardThreshold",
+            "agentOverrides",
+            "logDecisions",
+            "statusLine",
+            "feedbackLoop"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "background_task": {
       "type": "object",
       "properties": {

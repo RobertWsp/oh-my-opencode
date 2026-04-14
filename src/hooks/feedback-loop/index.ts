@@ -1,0 +1,6 @@
+export { createFeedbackLoopHook } from "./hook"
+export type { FeedbackLoopHookHandle } from "./hook"
+export type { SessionFeedback, FeedbackSignals } from "./types"
+export { scoreOutcome, buildOutcome } from "./types"
+export { classifyFollowUp } from "./follow-up-classifier"
+export type { FollowUpCategory } from "./follow-up-classifier"

@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "zod";
 
 export const HookNameSchema = z.enum([
   "todo-continuation-enforcer",
@@ -50,6 +50,11 @@ export const HookNameSchema = z.enum([
   "anthropic-effort",
   "hashline-read-enhancer",
   "read-image-resizer",
-])
+  "skill-error-reactor",
+  "skill-domain-detector",
+  "skill-compaction-reloader",
+  "model-router",
+  "feedback-loop",
+]);
 
-export type HookName = z.infer<typeof HookNameSchema>
+export type HookName = z.infer<typeof HookNameSchema>;

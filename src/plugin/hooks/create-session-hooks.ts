@@ -27,6 +27,8 @@ import {
   createRuntimeFallbackHook,
 } from "../../hooks"
 import { createAnthropicEffortHook } from "../../hooks/anthropic-effort"
+import { createModelRouterHook } from "../../hooks/model-router"
+import { createFeedbackLoopHook } from "../../hooks/feedback-loop"
 import {
   detectExternalNotificationPlugin,
   getNotificationConflictWarning,
@@ -60,6 +62,8 @@ export type SessionHooks = {
   taskResumeInfo: ReturnType<typeof createTaskResumeInfoHook> | null
   anthropicEffort: ReturnType<typeof createAnthropicEffortHook> | null
   runtimeFallback: ReturnType<typeof createRuntimeFallbackHook> | null
+  modelRouter: ReturnType<typeof createModelRouterHook> | null
+  feedbackLoop: ReturnType<typeof createFeedbackLoopHook> | null
 }
 
 export function createSessionHooks(args: {
@@ -261,6 +265,24 @@ export function createSessionHooks(args: {
           pluginConfig,
         }))
     : null
+
+  // Model router — analyzes each task and picks the best tier
+  // (haiku/sonnet/opus/opus-plan). Registered AFTER runtime-fallback so
+  // it runs independently; feedback-loop reads its decisions.
+  const modelRouter = isHookEnabled("model-router")
+    ? safeHook("model-router", () => createModelRouterHook(pluginConfig.model_router, ctx))
+    : null
+
+  // Feedback loop — captures outcome signals and enriches the router's
+  // decision log with success/failure scores. Registered AFTER the router
+  // so it can read its output in chat.message.
+  const feedbackLoop = isHookEnabled("feedback-loop")
+    ? safeHook("feedback-loop", () =>
+        createFeedbackLoopHook({
+          enabled: true,
+        }))
+    : null
+
   return {
     contextWindowMonitor,
     preemptiveCompaction,
@@ -285,5 +307,7 @@ export function createSessionHooks(args: {
     taskResumeInfo,
     anthropicEffort,
     runtimeFallback,
+    modelRouter,
+    feedbackLoop,
   }
 }
