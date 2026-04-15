@@ -1,4 +1,5 @@
-import type { DelegateTaskArgs, OpencodeClient } from "./types"
+import type { DelegateTaskArgs, OpencodeClient, DelegatedModelConfig } from "./types"
+import type { SisyphusAgentConfig } from "../../config/schema"
 import { isPlanFamily } from "./constants"
 import { buildTaskPrompt } from "./prompt-builder"
 import {
@@ -7,6 +8,8 @@ import {
 } from "../../shared/model-suggestion-retry"
 import { formatDetailedError } from "./error-formatting"
 import { getAgentToolRestrictions } from "../../shared/agent-tool-restrictions"
+import { stripInvisibleAgentCharacters } from "../../shared/agent-display-names"
+import { applySessionPromptParams } from "../../shared/session-prompt-params-helpers"
 import { setSessionTools } from "../../shared/session-tools-store"
 import { createInternalAgentTextPart } from "../../shared/internal-initiator-marker"
 
@@ -20,8 +23,26 @@ const sendSyncPromptDeps: SendSyncPromptDeps = {
   promptSyncWithModelSuggestionRetry,
 }
 
+function buildPromptGenerationParams(model: DelegatedModelConfig | undefined): Record<string, unknown> {
+  if (!model) {
+    return {}
+  }
+
+  const promptOptions: Record<string, unknown> = {
+    ...(model.reasoningEffort ? { reasoningEffort: model.reasoningEffort } : {}),
+    ...(model.thinking ? { thinking: model.thinking } : {}),
+  }
+
+  return {
+    ...(model.temperature !== undefined ? { temperature: model.temperature } : {}),
+    ...(model.top_p !== undefined ? { topP: model.top_p } : {}),
+    ...(model.maxTokens !== undefined ? { maxOutputTokens: model.maxTokens } : {}),
+    ...(Object.keys(promptOptions).length > 0 ? { options: promptOptions } : {}),
+  }
+}
+
 function isOracleAgent(agentToUse: string): boolean {
-  return agentToUse.toLowerCase() === "oracle"
+  return stripInvisibleAgentCharacters(agentToUse).toLowerCase() === "oracle"
 }
 
 function isUnexpectedEofError(error: unknown): boolean {
@@ -37,14 +58,16 @@ export async function sendSyncPrompt(
     agentToUse: string
     args: DelegateTaskArgs
     systemContent: string | undefined
-    categoryModel: { providerID: string; modelID: string; variant?: string } | undefined
+    categoryModel: DelegatedModelConfig | undefined
     toastManager: { removeTask: (id: string) => void } | null | undefined
     taskId: string | undefined
+    sisyphusAgentConfig?: SisyphusAgentConfig
   },
   deps: SendSyncPromptDeps = sendSyncPromptDeps
 ): Promise<string | null> {
   const allowTask = isPlanFamily(input.agentToUse)
-  const effectivePrompt = buildTaskPrompt(input.args.prompt, input.agentToUse)
+  const tddEnabled = input.sisyphusAgentConfig?.tdd
+  const effectivePrompt = buildTaskPrompt(input.args.prompt, input.agentToUse, tddEnabled)
   const tools = {
     task: allowTask,
     call_omo_agent: true,
@@ -53,17 +76,25 @@ export async function sendSyncPrompt(
   }
   setSessionTools(input.sessionID, tools)
 
+  applySessionPromptParams(input.sessionID, input.categoryModel)
+
   const promptArgs = {
     path: { id: input.sessionID },
     body: {
-      agent: input.agentToUse,
+      agent: stripInvisibleAgentCharacters(input.agentToUse),
       system: input.systemContent,
       tools,
       parts: [createInternalAgentTextPart(effectivePrompt)],
       ...(input.categoryModel
-        ? { model: { providerID: input.categoryModel.providerID, modelID: input.categoryModel.modelID } }
+        ? {
+            model: {
+              providerID: input.categoryModel.providerID,
+              modelID: input.categoryModel.modelID,
+            },
+          }
         : {}),
       ...(input.categoryModel?.variant ? { variant: input.categoryModel.variant } : {}),
+      ...buildPromptGenerationParams(input.categoryModel),
     },
   }
 

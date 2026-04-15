@@ -1,7 +1,11 @@
-import { describe, expect, it, mock } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test"
 
 describe("experimental.session.compacting handler", () => {
   function createCompactingHandler(hooks: {
+    compactionContextInjector?: {
+      capture: (sessionID: string) => Promise<void>
+      inject: (sessionID: string) => string
+    }
     compactionTodoPreserver?: { capture: (sessionID: string) => Promise<void> }
     claudeCodeHooks?: {
       "experimental.session.compacting"?: (
@@ -9,19 +13,19 @@ describe("experimental.session.compacting handler", () => {
         output: { context: string[] },
       ) => Promise<void>
     }
-    compactionContextInjector?: (sessionID: string) => string
   }) {
     return async (
       _input: { sessionID: string },
       output: { context: string[] },
     ): Promise<void> => {
+      await hooks.compactionContextInjector?.capture(_input.sessionID)
       await hooks.compactionTodoPreserver?.capture(_input.sessionID)
       await hooks.claudeCodeHooks?.["experimental.session.compacting"]?.(
         _input,
         output,
       )
       if (hooks.compactionContextInjector) {
-        output.context.push(hooks.compactionContextInjector(_input.sessionID))
+        output.context.push(hooks.compactionContextInjector.inject(_input.sessionID))
       }
     }
   }
@@ -33,6 +37,15 @@ describe("experimental.session.compacting handler", () => {
     const callOrder: string[] = []
 
     const handler = createCompactingHandler({
+      compactionContextInjector: {
+        capture: mock(async () => {
+          callOrder.push("checkpointCapture")
+        }),
+        inject: mock((sessionID: string) => {
+          callOrder.push("contextInjector")
+          return `context-for-${sessionID}`
+        }),
+      },
       compactionTodoPreserver: {
         capture: mock(async () => { callOrder.push("capture") }),
       },
@@ -41,16 +54,12 @@ describe("experimental.session.compacting handler", () => {
           callOrder.push("preCompact")
         }),
       },
-      compactionContextInjector: mock((sessionID: string) => {
-        callOrder.push("contextInjector")
-        return `context-for-${sessionID}`
-      }),
     })
 
     const output = { context: [] as string[] }
     await handler({ sessionID: "ses_test" }, output)
 
-    expect(callOrder).toEqual(["capture", "preCompact", "contextInjector"])
+    expect(callOrder).toEqual(["checkpointCapture", "capture", "preCompact", "contextInjector"])
     expect(output.context).toEqual(["context-for-ses_test"])
   })
 
@@ -77,17 +86,22 @@ describe("experimental.session.compacting handler", () => {
   //#then handler completes without error and other hooks still run
   it("handles null claudeCodeHooks gracefully", async () => {
     const captureMock = mock(async () => {})
+    const checkpointCaptureMock = mock(async () => {})
     const contextMock = mock(() => "injected-context")
 
     const handler = createCompactingHandler({
+      compactionContextInjector: {
+        capture: checkpointCaptureMock,
+        inject: contextMock,
+      },
       compactionTodoPreserver: { capture: captureMock },
       claudeCodeHooks: undefined,
-      compactionContextInjector: contextMock,
     })
 
     const output = { context: [] as string[] }
     await handler({ sessionID: "ses_test" }, output)
 
+    expect(checkpointCaptureMock).toHaveBeenCalledWith("ses_test")
     expect(captureMock).toHaveBeenCalledWith("ses_test")
     expect(contextMock).toHaveBeenCalledWith("ses_test")
     expect(output.context).toEqual(["injected-context"])
@@ -201,5 +215,187 @@ describe("look_at tool conditional registration", () => {
       }
       expect(tools).not.toHaveProperty("look_at")
     })
+  })
+})
+
+const mockInitConfigContext = mock(() => {})
+const mockDetectExternalSkillPlugin = mock(() => ({ detected: false, pluginName: null }))
+const mockGetSkillPluginConflictWarning = mock(() => "")
+const mockInjectServerAuthIntoClient = mock(() => {})
+const mockLogLegacyPluginStartupWarning = mock(() => {})
+const mockLoadPluginConfig = mock(() => ({}))
+const mockIsTmuxIntegrationEnabled = mock(
+  (pluginConfig: { tmux?: { enabled?: boolean } | undefined }) => pluginConfig.tmux?.enabled ?? false,
+)
+const mockIsInteractiveBashEnabled = mock(() => false)
+const mockCreateRuntimeTmuxConfig = mock(() => ({
+  enabled: false,
+  layout: "tiled" as const,
+  main_pane_size: 60,
+  main_pane_min_width: 80,
+  agent_pane_min_width: 40,
+  isolation: "inline" as const,
+}))
+const mockCreateManagers = mock(() => ({
+  backgroundManager: { shutdown: async () => {} },
+  skillMcpManager: { disconnectAll: async () => {} },
+  configHandler: async () => {},
+}))
+const mockCreateTools = mock(async () => ({
+  mergedSkills: [],
+  availableSkills: [],
+  filteredTools: {},
+}))
+const mockCreateHooks = mock(() => ({
+  disposeHooks: () => {},
+  compactionContextInjector: undefined,
+  compactionTodoPreserver: undefined,
+  claudeCodeHooks: undefined,
+}))
+const mockCreatePluginDispose = mock(() => async () => {})
+const mockCreatePluginInterface = mock(() => ({}))
+const mockInitializeOpenClaw = mock(async () => {})
+const mockStartTmuxCheck = mock(() => {})
+
+let OhMyOpenCodePlugin: (typeof import("./index"))["default"]
+
+function installIndexModuleMocks(): void {
+  mock.module("./cli/config-manager/config-context", () => ({
+    initConfigContext: mockInitConfigContext,
+  }))
+
+  mock.module("./shared/external-plugin-detector", () => ({
+    detectExternalSkillPlugin: mockDetectExternalSkillPlugin,
+    getSkillPluginConflictWarning: mockGetSkillPluginConflictWarning,
+  }))
+
+  mock.module("./shared", () => ({
+    injectServerAuthIntoClient: mockInjectServerAuthIntoClient,
+    log: mock(() => {}),
+    logLegacyPluginStartupWarning: mockLogLegacyPluginStartupWarning,
+  }))
+
+  mock.module("./plugin-config", () => ({
+    loadPluginConfig: mockLoadPluginConfig,
+  }))
+
+  mock.module("./create-runtime-tmux-config", () => ({
+    createRuntimeTmuxConfig: mockCreateRuntimeTmuxConfig,
+    isTmuxIntegrationEnabled: mockIsTmuxIntegrationEnabled,
+    isInteractiveBashEnabled: mockIsInteractiveBashEnabled,
+  }))
+
+  mock.module("./create-managers", () => ({
+    createManagers: mockCreateManagers,
+  }))
+
+  mock.module("./create-tools", () => ({
+    createTools: mockCreateTools,
+  }))
+
+  mock.module("./create-hooks", () => ({
+    createHooks: mockCreateHooks,
+  }))
+
+  mock.module("./plugin-dispose", () => ({
+    createPluginDispose: mockCreatePluginDispose,
+  }))
+
+  mock.module("./plugin-interface", () => ({
+    createPluginInterface: mockCreatePluginInterface,
+  }))
+
+  mock.module("./plugin-state", () => ({
+    createModelCacheState: mock(() => ({})),
+  }))
+
+  mock.module("./shared/first-message-variant", () => ({
+    createFirstMessageVariantGate: mock(() => ({
+      shouldOverride: () => false,
+      markApplied: () => {},
+      markSessionCreated: () => {},
+      clear: () => {},
+    })),
+  }))
+
+  mock.module("./openclaw", () => ({
+    initializeOpenClaw: mockInitializeOpenClaw,
+  }))
+
+  mock.module("./tools/interactive-bash", () => ({
+    interactive_bash: {},
+    startBackgroundCheck: mockStartTmuxCheck,
+  }))
+
+}
+
+async function importFreshIndexModule(): Promise<typeof import("./index")> {
+  return import(`./index?test=${Date.now()}-${Math.random()}`)
+}
+
+describe("OhMyOpenCodePlugin", () => {
+  beforeEach(async () => {
+    mock.restore()
+    installIndexModuleMocks()
+    ;({ default: OhMyOpenCodePlugin } = await importFreshIndexModule())
+    mockInitConfigContext.mockClear()
+    mockDetectExternalSkillPlugin.mockClear()
+    mockGetSkillPluginConflictWarning.mockClear()
+    mockInjectServerAuthIntoClient.mockClear()
+    mockLogLegacyPluginStartupWarning.mockClear()
+    mockLoadPluginConfig.mockClear()
+    mockIsTmuxIntegrationEnabled.mockClear()
+    mockIsInteractiveBashEnabled.mockClear()
+    mockCreateRuntimeTmuxConfig.mockClear()
+    mockCreateManagers.mockClear()
+    mockCreateTools.mockClear()
+    mockCreateHooks.mockClear()
+    mockCreatePluginDispose.mockClear()
+    mockCreatePluginInterface.mockClear()
+    mockInitializeOpenClaw.mockClear()
+    mockStartTmuxCheck.mockClear()
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("starts openclaw during plugin bootstrap when openclaw config exists", async () => {
+    // given
+    const openclawConfig = {
+      enabled: true,
+      gateways: {},
+      hooks: {},
+      replyListener: {
+        discordBotToken: "discord-token",
+      },
+    }
+    mockLoadPluginConfig.mockReturnValue({
+      openclaw: openclawConfig,
+    })
+
+    // when
+    await OhMyOpenCodePlugin({
+      directory: "/tmp/project",
+      client: {},
+    } as Parameters<typeof OhMyOpenCodePlugin>[0])
+
+    // then
+    expect(mockInitializeOpenClaw).toHaveBeenCalledTimes(1)
+    expect(mockInitializeOpenClaw).toHaveBeenCalledWith(openclawConfig)
+  })
+
+  it("does not start openclaw when openclaw config is absent", async () => {
+    // given
+    mockLoadPluginConfig.mockReturnValue({})
+
+    // when
+    await OhMyOpenCodePlugin({
+      directory: "/tmp/project",
+      client: {},
+    } as Parameters<typeof OhMyOpenCodePlugin>[0])
+
+    // then
+    expect(mockInitializeOpenClaw).not.toHaveBeenCalled()
   })
 })

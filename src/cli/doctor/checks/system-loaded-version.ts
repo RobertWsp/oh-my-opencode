@@ -1,15 +1,26 @@
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-
+import { resolveSymlink } from "../../../shared/file-utils"
 import { getLatestVersion } from "../../../hooks/auto-update-checker/checker"
 import { extractChannel } from "../../../hooks/auto-update-checker"
 import { PACKAGE_NAME } from "../constants"
-import { getOpenCodeCacheDir, parseJsonc } from "../../../shared"
+import { ACCEPTED_PACKAGE_NAMES, getOpenCodeCacheDir, getOpenCodeConfigPaths, parseJsonc } from "../../../shared"
 
 interface PackageJsonShape {
   version?: string
   dependencies?: Record<string, string>
+}
+
+interface PackageCandidate {
+  packageName: string
+  installedPackagePath: string
+}
+
+interface InstallCandidate {
+  cacheDir: string
+  cachePackagePath: string
+  packageCandidates: PackageCandidate[]
 }
 
 export interface LoadedVersionInfo {
@@ -36,6 +47,11 @@ function resolveOpenCodeCacheDir(): string {
   return platformDefault
 }
 
+function resolveExistingDir(dirPath: string): string {
+  if (!existsSync(dirPath)) return dirPath
+  return resolveSymlink(dirPath)
+}
+
 function readPackageJson(filePath: string): PackageJsonShape | null {
   if (!existsSync(filePath)) return null
 
@@ -53,19 +69,55 @@ function normalizeVersion(value: string | undefined): string | null {
   return match?.[0] ?? null
 }
 
+function createPackageCandidates(rootDir: string): PackageCandidate[] {
+  return ACCEPTED_PACKAGE_NAMES.map((packageName) => ({
+    packageName,
+    installedPackagePath: join(rootDir, "node_modules", packageName, "package.json"),
+  }))
+}
+
+function selectInstalledPackage(candidate: InstallCandidate): PackageCandidate {
+  return candidate.packageCandidates.find((packageCandidate) => existsSync(packageCandidate.installedPackagePath))
+    ?? candidate.packageCandidates[0]
+}
+
+function getExpectedVersion(cachePackage: PackageJsonShape | null, packageName: string): string | null {
+  return normalizeVersion(cachePackage?.dependencies?.[packageName])
+    ?? normalizeVersion(cachePackage?.dependencies?.[PACKAGE_NAME])
+}
+
 export function getLoadedPluginVersion(): LoadedVersionInfo {
-  const cacheDir = resolveOpenCodeCacheDir()
-  const cachePackagePath = join(cacheDir, "package.json")
-  const installedPackagePath = join(cacheDir, "node_modules", PACKAGE_NAME, "package.json")
+  const configPaths = getOpenCodeConfigPaths({ binary: "opencode" })
+  const configDir = resolveExistingDir(configPaths.configDir)
+  const cacheDir = resolveExistingDir(resolveOpenCodeCacheDir())
+  const candidates: InstallCandidate[] = [
+    {
+      cacheDir: configDir,
+      cachePackagePath: join(configDir, "package.json"),
+      packageCandidates: createPackageCandidates(configDir),
+    },
+    {
+      cacheDir,
+      cachePackagePath: join(cacheDir, "package.json"),
+      packageCandidates: createPackageCandidates(cacheDir),
+    },
+  ]
+
+  const selectedCandidate = candidates.find((candidate) => candidate.packageCandidates.some((packageCandidate) => existsSync(packageCandidate.installedPackagePath)))
+    ?? candidates[0]
+
+  const { cacheDir: selectedDir, cachePackagePath } = selectedCandidate
+  const selectedPackage = selectInstalledPackage(selectedCandidate)
+  const installedPackagePath = selectedPackage.installedPackagePath
 
   const cachePackage = readPackageJson(cachePackagePath)
   const installedPackage = readPackageJson(installedPackagePath)
 
-  const expectedVersion = normalizeVersion(cachePackage?.dependencies?.[PACKAGE_NAME])
+  const expectedVersion = getExpectedVersion(cachePackage, selectedPackage.packageName)
   const loadedVersion = normalizeVersion(installedPackage?.version)
 
   return {
-    cacheDir,
+    cacheDir: selectedDir,
     cachePackagePath,
     installedPackagePath,
     expectedVersion,

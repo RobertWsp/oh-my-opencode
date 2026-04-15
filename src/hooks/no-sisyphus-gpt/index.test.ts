@@ -38,8 +38,8 @@ describe("no-sisyphus-gpt hook", () => {
 
     // then - toast is shown for every message
     expect(showToast).toHaveBeenCalledTimes(2)
-    expect(output1.message.agent).toBe(HEPHAESTUS_DISPLAY)
-    expect(output2.message.agent).toBe(HEPHAESTUS_DISPLAY)
+    expect(output1.message.agent).toBe("hephaestus")
+    expect(output2.message.agent).toBe("hephaestus")
     expect(showToast.mock.calls[0]?.[0]).toMatchObject({
       body: {
         title: "NEVER Use Sisyphus with GPT",
@@ -104,7 +104,7 @@ describe("no-sisyphus-gpt hook", () => {
     await hook["chat.message"]?.({
       sessionID: "ses_3",
       agent: HEPHAESTUS_DISPLAY,
-      model: { providerID: "openai", modelID: "gpt-5.2" },
+      model: { providerID: "openai", modelID: "gpt-5.4" },
     }, output)
 
     // then - no toast
@@ -126,11 +126,11 @@ describe("no-sisyphus-gpt hook", () => {
     // when - chat.message runs without input.agent
     await hook["chat.message"]?.({
       sessionID: "ses_4",
-      model: { providerID: "openai", modelID: "gpt-5.2" },
+      model: { providerID: "openai", modelID: "gpt-4o" },
     }, output)
 
     // then - toast shown via session-agent fallback
     expect(showToast).toHaveBeenCalledTimes(1)
-    expect(output.message.agent).toBe(HEPHAESTUS_DISPLAY)
+    expect(output.message.agent).toBe("hephaestus")
   })
 })

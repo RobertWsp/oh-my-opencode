@@ -8,6 +8,7 @@ import {
 	detectCompletionInTranscript,
 } from "./completion-promise-detector"
 import { continueIteration } from "./iteration-continuation"
+import { handlePendingVerification } from "./pending-verification-handler"
 import { handleDeletedLoopSession, handleErroredLoopSession } from "./session-event-handler"
 
 type SessionRecovery = {
@@ -22,6 +23,7 @@ type LoopStateController = {
 	setSessionID: (sessionID: string) => RalphLoopState | null
 	markVerificationPending: (sessionID: string) => RalphLoopState | null
 	setVerificationSessionID: (sessionID: string, verificationSessionID: string) => RalphLoopState | null
+	restartAfterFailedVerification: (sessionID: string, messageCountAtStart?: number) => RalphLoopState | null
 }
 type RalphLoopEventHandlerOptions = { directory: string; apiTimeoutMs: number; getTranscriptPath: (sessionID: string) => string | undefined; checkSessionExists?: RalphLoopOptions["checkSessionExists"]; sessionRecovery: SessionRecovery; loopState: LoopStateController }
 
@@ -57,7 +59,13 @@ export function createRalphLoopEventHandler(
 					return
 				}
 
-				if (state.session_id && state.session_id !== sessionID) {
+				const verificationSessionID = state.verification_pending
+					? state.verification_session_id
+					: undefined
+				const matchesParentSession = state.session_id === undefined || state.session_id === sessionID
+				const matchesVerificationSession = verificationSessionID === sessionID
+
+				if (!matchesParentSession && !matchesVerificationSession && state.session_id) {
 					if (options.checkSessionExists) {
 						try {
 							const exists = await options.checkSessionExists(state.session_id)
@@ -79,10 +87,7 @@ export function createRalphLoopEventHandler(
 					return
 				}
 
-				const verificationSessionID = state.verification_pending
-					? state.verification_session_id
-					: undefined
-				const completionSessionID = verificationSessionID ?? (state.verification_pending ? undefined : sessionID)
+				const completionSessionID = verificationSessionID ?? sessionID
 				const transcriptPath = completionSessionID ? options.getTranscriptPath(completionSessionID) : undefined
 				const completionViaTranscript = completionSessionID
 					? detectCompletionInTranscript(
@@ -102,7 +107,13 @@ export function createRalphLoopEventHandler(
 							sinceMessageIndex: undefined,
 						})
 					: state.verification_pending
-						? false
+						? await detectCompletionInSessionMessages(ctx, {
+							sessionID,
+							promise: state.completion_promise,
+							apiTimeoutMs: options.apiTimeoutMs,
+							directory: options.directory,
+							sinceMessageIndex: state.message_count_at_start,
+						})
 					: await detectCompletionInSessionMessages(ctx, {
 						sessionID,
 						promise: state.completion_promise,
@@ -123,6 +134,27 @@ export function createRalphLoopEventHandler(
 					await handleDetectedCompletion(ctx, {
 						sessionID,
 						state,
+						loopState: options.loopState,
+						directory: options.directory,
+						apiTimeoutMs: options.apiTimeoutMs,
+					})
+					return
+				}
+
+				if (state.verification_pending) {
+					if (!verificationSessionID && matchesParentSession) {
+						log(`[${HOOK_NAME}] Verification pending without tracked oracle session, running recovery check`, {
+							sessionID,
+							iteration: state.iteration,
+						})
+					}
+
+					await handlePendingVerification(ctx, {
+						sessionID,
+						state,
+						verificationSessionID,
+						matchesParentSession,
+						matchesVerificationSession,
 						loopState: options.loopState,
 						directory: options.directory,
 						apiTimeoutMs: options.apiTimeoutMs,

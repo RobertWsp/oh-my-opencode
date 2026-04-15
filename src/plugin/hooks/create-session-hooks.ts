@@ -25,6 +25,7 @@ import {
   createQuestionLabelTruncatorHook,
   createPreemptiveCompactionHook,
   createRuntimeFallbackHook,
+  createLegacyPluginToastHook,
 } from "../../hooks"
 import { createAnthropicEffortHook } from "../../hooks/anthropic-effort"
 import { createModelRouterHook } from "../../hooks/model-router"
@@ -37,6 +38,7 @@ import {
 } from "../../shared"
 import { safeCreateHook } from "../../shared/safe-create-hook"
 import { sessionExists } from "../../tools"
+import { isTmuxIntegrationEnabled } from "../../create-runtime-tmux-config"
 
 export type SessionHooks = {
   contextWindowMonitor: ReturnType<typeof createContextWindowMonitorHook> | null
@@ -62,6 +64,7 @@ export type SessionHooks = {
   taskResumeInfo: ReturnType<typeof createTaskResumeInfoHook> | null
   anthropicEffort: ReturnType<typeof createAnthropicEffortHook> | null
   runtimeFallback: ReturnType<typeof createRuntimeFallbackHook> | null
+  legacyPluginToast: ReturnType<typeof createLegacyPluginToastHook> | null
   modelRouter: ReturnType<typeof createModelRouterHook> | null
   feedbackLoop: ReturnType<typeof createFeedbackLoopHook> | null
 }
@@ -155,8 +158,6 @@ export function createSessionHooks(args: {
     }
   }
 
-  // Model fallback hook (configurable via model_fallback config + disabled_hooks)
-  // This handles automatic model switching when model errors occur
   const isModelFallbackConfigEnabled = pluginConfig.model_fallback ?? false
   const modelFallback = isModelFallbackConfigEnabled && isHookEnabled("model-fallback")
     ? safeHook("model-fallback", () =>
@@ -188,6 +189,7 @@ export function createSessionHooks(args: {
           showStartupToast: isHookEnabled("startup-toast"),
           isSisyphusEnabled: pluginConfig.sisyphus_agent?.disabled !== true,
           autoUpdate: pluginConfig.auto_update ?? true,
+          modelCapabilities: pluginConfig.model_capabilities,
         }))
     : null
 
@@ -199,7 +201,9 @@ export function createSessionHooks(args: {
     ? safeHook("non-interactive-env", () => createNonInteractiveEnvHook(ctx))
     : null
 
-  const interactiveBashSession = isHookEnabled("interactive-bash-session")
+  const interactiveBashSession =
+    isHookEnabled("interactive-bash-session") &&
+    isTmuxIntegrationEnabled(pluginConfig)
     ? safeHook("interactive-bash-session", () => createInteractiveBashSessionHook(ctx))
     : null
 
@@ -266,6 +270,10 @@ export function createSessionHooks(args: {
         }))
     : null
 
+  const legacyPluginToast = isHookEnabled("legacy-plugin-toast")
+    ? safeHook("legacy-plugin-toast", () => createLegacyPluginToastHook(ctx))
+    : null
+
   // Model router — analyzes each task and picks the best tier
   // (haiku/sonnet/opus/opus-plan). Registered AFTER runtime-fallback so
   // it runs independently; feedback-loop reads its decisions.
@@ -282,6 +290,7 @@ export function createSessionHooks(args: {
           enabled: true,
         }))
     : null
+
 
   return {
     contextWindowMonitor,
@@ -307,6 +316,7 @@ export function createSessionHooks(args: {
     taskResumeInfo,
     anthropicEffort,
     runtimeFallback,
+    legacyPluginToast,
     modelRouter,
     feedbackLoop,
   }

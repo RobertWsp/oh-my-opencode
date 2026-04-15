@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test"
+import type { PluginInput } from "@opencode-ai/plugin"
 import { createKeywordDetectorHook } from "./index"
 import { setMainSession, updateSessionAgent, clearSessionAgent, _resetForTesting } from "../../features/claude-code-session-state"
 import { ContextCollector } from "../../features/context-injector"
@@ -31,7 +32,7 @@ describe("keyword-detector message transform", () => {
           showToast: async () => {},
         },
       },
-    } as any
+    } as unknown as PluginInput
   }
 
   test("should prepend ultrawork message to text part", async () => {
@@ -119,12 +120,12 @@ describe("keyword-detector session filtering", () => {
     return {
       client: {
         tui: {
-          showToast: async (opts: any) => {
+          showToast: async (opts: { body: { title: string } }) => {
             toastCalls.push(opts.body.title)
           },
         },
       },
-    } as any
+    } as unknown as PluginInput
   }
 
   test("should skip non-ultrawork keywords in non-main session (using mainSessionID check)", async () => {
@@ -146,8 +147,8 @@ describe("keyword-detector session filtering", () => {
     )
 
     // then - search keyword should be filtered out based on mainSessionID comparison
-    const skipLog = logCalls.find(c => c.msg.includes("Skipping non-ultrawork keywords in non-main session"))
-    expect(skipLog).toBeDefined()
+    expect(output.message.variant).toBeUndefined()
+    expect(output.parts[0]?.text).toBe("search mode 찾아줘")
   })
 
   test("should allow ultrawork keywords in non-main session", async () => {
@@ -169,8 +170,8 @@ describe("keyword-detector session filtering", () => {
       output
     )
 
-    // then - ultrawork should still work (variant set to max)
-    expect(output.message.variant).toBe("max")
+    // then - ultrawork should still work without forcing a new variant
+    expect(output.message.variant).toBeUndefined()
     expect(toastCalls).toContain("Ultrawork Mode Activated")
   })
 
@@ -214,12 +215,12 @@ describe("keyword-detector session filtering", () => {
       output
     )
 
-    // then - all keywords should work
-    expect(output.message.variant).toBe("max")
+    // then - all keywords should work without forcing a new variant
+    expect(output.message.variant).toBeUndefined()
     expect(toastCalls).toContain("Ultrawork Mode Activated")
   })
 
-  test("should override existing variant when ultrawork keyword is used", async () => {
+  test("should preserve existing runtime variant when ultrawork keyword is used", async () => {
     // given - main session set with pre-existing variant from TUI
     setMainSession("main-123")
 
@@ -236,8 +237,8 @@ describe("keyword-detector session filtering", () => {
       output
     )
 
-    // then - ultrawork should override TUI variant to max
-    expect(output.message.variant).toBe("max")
+    // then - ultrawork should preserve the already resolved runtime variant
+    expect(output.message.variant).toBe("low")
     expect(toastCalls).toContain("Ultrawork Mode Activated")
   })
 })
@@ -264,12 +265,12 @@ describe("keyword-detector word boundary", () => {
     return {
       client: {
         tui: {
-          showToast: async (opts: any) => {
+          showToast: async (opts: { body: { title: string } }) => {
             toastCalls.push(opts.body.title)
           },
         },
       },
-    } as any
+    } as unknown as PluginInput
   }
 
   test("should NOT trigger ultrawork on partial matches like 'StatefulWidget' containing 'ulw'", async () => {
@@ -311,8 +312,8 @@ describe("keyword-detector word boundary", () => {
       output
     )
 
-    // then - ultrawork should be triggered
-    expect(output.message.variant).toBe("max")
+    // then - ultrawork should be triggered without forcing max
+    expect(output.message.variant).toBeUndefined()
     expect(toastCalls).toContain("Ultrawork Mode Activated")
   })
 
@@ -363,7 +364,7 @@ describe("keyword-detector system-reminder filtering", () => {
           showToast: async () => {},
         },
       },
-    } as any
+    } as unknown as PluginInput
   }
 
   test("should NOT trigger search mode from keywords inside <system-reminder> tags", async () => {
@@ -554,7 +555,7 @@ describe("keyword-detector agent-specific ultrawork messages", () => {
           showToast: async () => {},
         },
       },
-    } as any
+    } as unknown as PluginInput
   }
 
   test("should skip ultrawork injection when agent is prometheus", async () => {
@@ -744,5 +745,111 @@ describe("keyword-detector agent-specific ultrawork messages", () => {
     expect(textPart).toBeDefined()
     expect(textPart!.text).toBe("ultrawork plan this")
     expect(textPart!.text).not.toContain("YOU ARE A PLANNER, NOT AN IMPLEMENTER")
+  })
+})
+
+describe("keyword-detector non-OMO agent skipping", () => {
+  let logCalls: Array<{ msg: string; data?: unknown }>
+  let logSpy: ReturnType<typeof spyOn>
+
+  beforeEach(() => {
+    _resetForTesting()
+    logCalls = []
+    logSpy = spyOn(sharedModule, "log").mockImplementation((msg: string, data?: unknown) => {
+      logCalls.push({ msg, data })
+    })
+  })
+
+  afterEach(() => {
+    logSpy?.mockRestore()
+    _resetForTesting()
+  })
+
+  function createMockPluginInput() {
+    return {
+      client: {
+        tui: {
+          showToast: async () => {},
+        },
+      },
+    } as unknown as PluginInput
+  }
+
+  test("should skip all keyword injection for OpenCode-Builder agent", async () => {
+    // given - keyword-detector hook with Builder agent
+    const collector = new ContextCollector()
+    const hook = createKeywordDetectorHook(createMockPluginInput(), collector)
+    const sessionID = "builder-session"
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: "ultrawork search and analyze this code" }],
+    }
+
+    // when - keyword detection runs with OpenCode-Builder agent
+    await hook["chat.message"]({ sessionID, agent: "OpenCode-Builder" }, output)
+
+    // then - no keywords should be injected
+    const textPart = output.parts.find(p => p.type === "text")
+    expect(textPart).toBeDefined()
+    expect(textPart!.text).toBe("ultrawork search and analyze this code")
+  })
+
+  test("should skip all keyword injection for Plan agent", async () => {
+    // given - keyword-detector hook with Plan agent
+    const collector = new ContextCollector()
+    const hook = createKeywordDetectorHook(createMockPluginInput(), collector)
+    const sessionID = "plan-session"
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: "search mode analyze mode ultrawork" }],
+    }
+
+    // when - keyword detection runs with Plan agent
+    await hook["chat.message"]({ sessionID, agent: "Plan" }, output)
+
+    // then - no keywords should be injected for non-OMO Plan agent
+    const textPart = output.parts.find(p => p.type === "text")
+    expect(textPart).toBeDefined()
+    expect(textPart!.text).toBe("search mode analyze mode ultrawork")
+  })
+
+  test("should still inject keywords for OMO agents like Sisyphus", async () => {
+    // given - keyword-detector hook with Sisyphus agent
+    const collector = new ContextCollector()
+    const hook = createKeywordDetectorHook(createMockPluginInput(), collector)
+    const sessionID = "sisyphus-session-omo"
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: "ultrawork implement this" }],
+    }
+
+    // when - keyword detection runs with Sisyphus (OMO agent)
+    await hook["chat.message"]({ sessionID, agent: "sisyphus" }, output)
+
+    // then - keywords should be injected normally
+    const textPart = output.parts.find(p => p.type === "text")
+    expect(textPart).toBeDefined()
+    expect(textPart!.text).toContain("YOU MUST LEVERAGE ALL AVAILABLE AGENTS")
+    expect(textPart!.text).toContain("implement this")
+  })
+
+  test("should skip keyword injection for agent names containing 'builder'", async () => {
+    // given - keyword-detector hook with a builder-variant agent name
+    const collector = new ContextCollector()
+    const hook = createKeywordDetectorHook(createMockPluginInput(), collector)
+    const sessionID = "custom-builder-session"
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: "search this codebase" }],
+    }
+
+    // when - keyword detection runs with a builder-type agent
+    await hook["chat.message"]({ sessionID, agent: "Custom-Builder" }, output)
+
+    // then - search-mode should NOT be injected
+    const textPart = output.parts.find(p => p.type === "text")
+    expect(textPart).toBeDefined()
+    expect(textPart!.text).toBe("search this codebase")
+    expect(textPart!.text).not.toContain("[search-mode]")
   })
 })

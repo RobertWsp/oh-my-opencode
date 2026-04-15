@@ -1,20 +1,35 @@
-export type ShellType = "unix" | "powershell" | "cmd"
+export type ShellType = "unix" | "powershell" | "cmd" | "csh"
 
 /**
  * Detect the current shell type based on environment variables.
  * 
  * Detection priority:
- * 1. PSModulePath → PowerShell
- * 2. SHELL env var → Unix shell
+ * 1. SHELL env var → Unix shell (explicit user choice takes precedence)
+ * 2. PSModulePath → PowerShell
  * 3. Platform fallback → win32: cmd, others: unix
+ * 
+ * Note: SHELL is checked before PSModulePath because on Windows, PSModulePath
+ * is always set by the system even when the active shell is Git Bash or WSL.
+ * An explicit SHELL variable indicates the user's chosen shell overrides that.
  */
 export function detectShellType(): ShellType {
-  if (process.env.PSModulePath) {
-    return "powershell"
+  if (process.env.SHELL) {
+    const shell = process.env.SHELL
+    if (shell.includes("csh") || shell.includes("tcsh")) {
+      return "csh"
+    }
+    return "unix"
   }
 
-  if (process.env.SHELL) {
+  // Git Bash on Windows sets MSYSTEM (e.g. "MINGW64", "MINGW32", "MSYS")
+  // even when SHELL is not set. Detect this before PSModulePath which is
+  // always present on Windows regardless of the active shell.
+  if (process.env.MSYSTEM) {
     return "unix"
+  }
+
+  if (process.env.PSModulePath) {
+    return "powershell"
   }
 
   return process.platform === "win32" ? "cmd" : "unix"
@@ -34,6 +49,7 @@ export function shellEscape(value: string, shellType: ShellType): string {
 
   switch (shellType) {
     case "unix":
+    case "csh":
       if (/[^a-zA-Z0-9_\-.:\/]/.test(value)) {
         return `'${value.replace(/'/g, "'\\''")}'`
       }
@@ -91,6 +107,13 @@ export function buildEnvPrefix(
       return `export ${assignments};`
     }
 
+    case "csh": {
+      const assignments = entries
+        .map(([key, value]) => `setenv ${key} ${shellEscape(value, shellType)}`)
+        .join("; ")
+      return `${assignments};`
+    }
+
     case "powershell": {
       const assignments = entries
         .map(([key, value]) => `$env:${key}=${shellEscape(value, shellType)}`)
@@ -108,4 +131,45 @@ export function buildEnvPrefix(
     default:
       return ""
   }
+}
+
+/**
+ * Escape a value for use in a double-quoted shell -c command argument.
+ * 
+ * In shell -c "..." strings, these characters have special meaning and must be escaped:
+ * - $ - variable expansion, command substitution $(...)
+ * - ` - command substitution `...`
+ * - \\ - escape character
+ * - " - end quote
+ * - ; | & - command separators
+ * - # - comment
+ * - () - grouping operators
+ * 
+ * @param value - The value to escape
+ * @returns Escaped value safe for double-quoted shell -c argument
+ * 
+ * @example
+ * ```ts
+ * // For malicious input
+ * const url = "http://localhost:3000'; cat /etc/passwd; echo '"
+ * const escaped = shellEscapeForDoubleQuotedCommand(url)
+ * // => "http://localhost:3000'\''; cat /etc/passwd; echo '"
+ * 
+ * // Usage in command:
+ * const cmd = `/bin/sh -c "opencode attach ${escaped} --session ${sessionId}"`
+ * ```
+ */
+export function shellEscapeForDoubleQuotedCommand(value: string): string {
+  // Order matters: escape backslash FIRST, then other characters
+  return value
+    .replace(/\\/g, "\\\\") // escape backslash first
+    .replace(/\$/g, "\\$") // escape dollar sign
+    .replace(/`/g, "\\`") // escape backticks
+    .replace(/"/g, "\\\"") // escape double quotes
+    .replace(/;/g, "\\;") // escape semicolon (command separator)
+    .replace(/\|/g, "\\|") // escape pipe (command separator)
+    .replace(/&/g, "\\&") // escape ampersand (command separator)
+    .replace(/#/g, "\\#") // escape hash (comment)
+    .replace(/\(/g, "\\(") // escape parentheses
+    .replace(/\)/g, "\\)") // escape parentheses
 }
