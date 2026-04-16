@@ -22,6 +22,16 @@ export interface FeedbackSignals {
   userPinnedDifferentModel: boolean
   toolsExecutedCount: number
   completedCleanly: boolean
+  // Subagent isolation signals (optional; populated when the turn ran in
+  // spawn mode via the router/subagent-decision pipeline).
+  subagentUsed?: boolean
+  subagentSessionID?: string
+  subagentDurationMs?: number
+  escalationRequested?: boolean
+  escalationFromTier?: import("../model-router/types").Tier
+  escalationToTier?: import("../model-router/types").Tier
+  escalationReason?: string
+  totalDurationMs?: number
 }
 
 export function emptySignals(): FeedbackSignals {
@@ -34,6 +44,8 @@ export function emptySignals(): FeedbackSignals {
     userPinnedDifferentModel: false,
     toolsExecutedCount: 0,
     completedCleanly: false,
+    subagentUsed: false,
+    escalationRequested: false,
   }
 }
 
@@ -62,6 +74,13 @@ export function scoreOutcome(signals: FeedbackSignals): number {
   if (signals.userFollowedUp && signals.followUpCategory === "correction") score -= 0.3
   if (signals.userFollowedUp && signals.followUpCategory === "question") score -= 0.05
 
+  // ── Subagent isolation adjustments
+  // Escalation is a routing-error signal — initial tier was too low.
+  if (signals.escalationRequested) score -= 0.25
+  // A subagent that completed cleanly validates the router's spawn
+  // decision — small positive reinforcement.
+  if (signals.subagentUsed && signals.completedCleanly && !signals.escalationRequested) score += 0.1
+
   return Math.max(-1, Math.min(1, score))
 }
 
@@ -80,6 +99,14 @@ export function buildOutcome(signals: FeedbackSignals): RoutingOutcome {
       modelFallbackApplied: signals.modelFallbackApplied,
       userPinnedDifferentModel: signals.userPinnedDifferentModel,
       toolsExecutedCount: signals.toolsExecutedCount,
+      subagentUsed: signals.subagentUsed,
+      subagentSessionID: signals.subagentSessionID,
+      subagentDurationMs: signals.subagentDurationMs,
+      escalationRequested: signals.escalationRequested,
+      escalationFromTier: signals.escalationFromTier,
+      escalationToTier: signals.escalationToTier,
+      escalationReason: signals.escalationReason,
+      totalDurationMs: signals.totalDurationMs,
     },
   }
 }

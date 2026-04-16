@@ -45,6 +45,21 @@ export const DomainExpertiseSchema = z.enum([
 
 export const IterationProfileSchema = z.enum(["single_shot", "short_dialog", "long_session", "marathon"])
 
+export const ComplexityUncertaintySchema = z.enum(["high_confidence", "medium_confidence", "low_confidence"])
+
+export const DetectedIntentSchema = z.enum([
+  "commit_push",
+  "merge_simple",
+  "merge_complex",
+  "refactor_architectural",
+  "security_audit",
+  "bug_investigation",
+  "docs_update",
+  "test_write",
+  "lookup_qa",
+  "none",
+])
+
 export const TaskAnalysisSchema = z.object({
   task_type: TaskTypeSchema,
   task_type_evidence: z.string().min(5).describe("Quote from the user's prompt supporting the task_type classification"),
@@ -87,6 +102,14 @@ export const TaskAnalysisSchema = z.object({
     .string()
     .min(10)
     .describe("Argue why the OPPOSITE tier might also be valid — forces balanced reasoning"),
+
+  // Optional extensions for subagent isolation (tolerate missing fields
+  // in older cached outputs; encouraged in live analyzer calls).
+  complexity_uncertainty: ComplexityUncertaintySchema.optional(),
+  uncertainty_reason: z.string().optional(),
+  subagent_suitable: z.boolean().optional(),
+  subagent_isolation_reason: z.string().optional(),
+  detected_intent: DetectedIntentSchema.optional(),
 })
 
 export type TaskAnalysisSchemaOutput = z.infer<typeof TaskAnalysisSchema>
@@ -125,6 +148,8 @@ function buildAnalyzeTaskJsonSchema(): Record<string, unknown> {
     novelty: NoveltySchema.options,
     domain_expertise: DomainExpertiseSchema.options,
     iteration_profile: IterationProfileSchema.options,
+    complexity_uncertainty: ComplexityUncertaintySchema.options,
+    detected_intent: DetectedIntentSchema.options,
   }
 
   return {
@@ -196,6 +221,28 @@ function buildAnalyzeTaskJsonSchema(): Record<string, unknown> {
       contrarian_check: {
         type: "string",
         description: "Argue why the OPPOSITE tier might also be valid",
+      },
+      complexity_uncertainty: {
+        type: "string",
+        enum: enums.complexity_uncertainty,
+        description: "How confident is the COMPLEXITY estimate itself (not the model rec)",
+      },
+      uncertainty_reason: {
+        type: "string",
+        description: "One sentence: what might flip the complexity estimate mid-execution",
+      },
+      subagent_suitable: {
+        type: "boolean",
+        description: "Can this task run isolated in a subagent (single-shot, not repo-wide)",
+      },
+      subagent_isolation_reason: {
+        type: "string",
+        description: "Why subagent isolation would or wouldn't work here",
+      },
+      detected_intent: {
+        type: "string",
+        enum: enums.detected_intent,
+        description: "High-level intent category or 'none'",
       },
     },
   }

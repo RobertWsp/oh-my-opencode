@@ -222,6 +222,19 @@ export function createChatMessageHandler(args: {
     // and tracks outcome signals. Must run AFTER the router.
     await hooks.feedbackLoop?.["chat.message"]?.(input, output)
 
+    // Auto-Planning Gate runs the analyzer on the first user turn of a
+    // session and, if the task qualifies (architectural / complex_refactor
+    // / high-risk standard_implementation), injects a Prometheus directive.
+    // Fire-and-forget internally; does not block this dispatch.
+    await (hooks as unknown as {
+      autoPlanningGate?: {
+        "chat.message"?: (
+          input: { sessionID?: string; agent?: string },
+          output: { parts?: Array<{ type?: string; text?: string; synthetic?: boolean }> },
+        ) => Promise<void>
+      } | null
+    }).autoPlanningGate?.["chat.message"]?.(input, output)
+
 
     if (!isRuntimeFallbackEnabled) {
       await hooks.modelFallback?.["chat.message"]?.(input, output)

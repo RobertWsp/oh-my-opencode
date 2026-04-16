@@ -55,6 +55,31 @@ export type DomainExpertise =
 export type IterationProfile = "single_shot" | "short_dialog" | "long_session" | "marathon"
 
 /**
+ * How confident the analyzer is in the complexity estimate.
+ * low_confidence triggers conservative behavior: keep inline OR spawn with
+ * escalation enabled so the subagent can self-upgrade if it discovers more
+ * complexity than estimated.
+ */
+export type ComplexityUncertainty = "high_confidence" | "medium_confidence" | "low_confidence"
+
+/**
+ * Known intents that map directly to tier+reasoning defaults. Detected from
+ * the prompt + analysis (ex: "commit and push" → commit_push). When null,
+ * the decision matrix runs normally.
+ */
+export type DetectedIntent =
+  | "commit_push"
+  | "merge_simple"
+  | "merge_complex"
+  | "refactor_architectural"
+  | "security_audit"
+  | "bug_investigation"
+  | "docs_update"
+  | "test_write"
+  | "lookup_qa"
+  | null
+
+/**
  * Full structured analysis of a task across 9 independent dimensions.
  * Each dimension carries explicit evidence (quote from prompt) to ensure
  * analyses are auditable and never vague.
@@ -89,6 +114,14 @@ export interface TaskAnalysis {
   confidence: number // 0.0-1.0
   primary_reasoning: string
   contrarian_check: string
+
+  // --- Extensions for subagent isolation (optional — may be absent in
+  // older cached analyses or when analyzer skips them).
+  complexity_uncertainty?: ComplexityUncertainty
+  uncertainty_reason?: string
+  subagent_suitable?: boolean
+  subagent_isolation_reason?: string
+  detected_intent?: DetectedIntent
 }
 
 /**
@@ -158,6 +191,16 @@ export interface RoutingOutcome {
     modelFallbackApplied: boolean
     userPinnedDifferentModel: boolean
     toolsExecutedCount: number
+    // --- Extensions for subagent isolation ---
+    subagentUsed?: boolean
+    subagentSessionID?: string
+    subagentDurationMs?: number
+    escalationRequested?: boolean
+    escalationFromTier?: Tier
+    escalationToTier?: Tier
+    escalationReason?: string
+    totalDurationMs?: number
+    qualityRating?: number // -1 (bad) / 0 (ok) / 1 (excellent)
   }
 }
 

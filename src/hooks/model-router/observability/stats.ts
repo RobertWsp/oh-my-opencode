@@ -29,6 +29,16 @@ export interface RoutingStats {
   avgOutcomeScore: number
   // Reasons histogram (top 10)
   topReasons: Array<{ reason: string; count: number }>
+  // Subagent isolation stats
+  subagent: {
+    totalSpawns: number
+    completions: number
+    successRate: number
+    avgDurationMs: number
+    escalationsRequested: number
+    escalationRate: number // escalations / completions
+    byIntent: Record<string, number>
+  }
 }
 
 const EMPTY_TIER_RECORD = (): Record<Tier, number> => ({ haiku: 0, sonnet: 0, opus: 0, "opus-plan": 0 })
@@ -105,6 +115,12 @@ export async function computeStats(logPath: string, windowDays: number = 7): Pro
   }
   let scoreSum = 0
   let outcomesJoined = 0
+  let subagentCompletions = 0
+  let subagentSuccesses = 0
+  let subagentDurationSum = 0
+  let subagentDurationCount = 0
+  let escalationsRequested = 0
+  const intentCounts = new Map<string, number>()
   for (const [key, outcome] of outcomes) {
     const decision = decisions.get(key)
     if (!decision) continue
@@ -113,6 +129,21 @@ export async function computeStats(logPath: string, windowDays: number = 7): Pro
     const bucket = successByTier[decision.tier]
     bucket.total++
     if (outcome.score > 0) bucket.successful++
+
+    const sig = outcome.signals
+    if (sig.subagentUsed) {
+      subagentCompletions++
+      if (outcome.score > 0 && !sig.escalationRequested) subagentSuccesses++
+      if (typeof sig.subagentDurationMs === "number" && sig.subagentDurationMs > 0) {
+        subagentDurationSum += sig.subagentDurationMs
+        subagentDurationCount++
+      }
+    }
+    if (sig.escalationRequested) escalationsRequested++
+    const intent = decision.analysis?.detected_intent
+    if (intent && (intent as string) !== "none") {
+      intentCounts.set(intent as string, (intentCounts.get(intent as string) ?? 0) + 1)
+    }
   }
   for (const tier of Object.keys(successByTier) as Tier[]) {
     const b = successByTier[tier]
@@ -123,6 +154,9 @@ export async function computeStats(logPath: string, windowDays: number = 7): Pro
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
     .map(([reason, count]) => ({ reason, count }))
+
+  const byIntent: Record<string, number> = {}
+  for (const [k, v] of intentCounts) byIntent[k] = v
 
   return {
     windowDays,
@@ -136,6 +170,15 @@ export async function computeStats(logPath: string, windowDays: number = 7): Pro
     successRateByTier: successByTier,
     avgOutcomeScore: outcomesJoined > 0 ? scoreSum / outcomesJoined : 0,
     topReasons,
+    subagent: {
+      totalSpawns: subagentCompletions,
+      completions: subagentCompletions,
+      successRate: subagentCompletions > 0 ? subagentSuccesses / subagentCompletions : 0,
+      avgDurationMs: subagentDurationCount > 0 ? subagentDurationSum / subagentDurationCount : 0,
+      escalationsRequested,
+      escalationRate: subagentCompletions > 0 ? escalationsRequested / subagentCompletions : 0,
+      byIntent,
+    },
   }
 }
 
@@ -157,6 +200,15 @@ function emptyStats(windowDays: number): RoutingStats {
     },
     avgOutcomeScore: 0,
     topReasons: [],
+    subagent: {
+      totalSpawns: 0,
+      completions: 0,
+      successRate: 0,
+      avgDurationMs: 0,
+      escalationsRequested: 0,
+      escalationRate: 0,
+      byIntent: {},
+    },
   }
 }
 
@@ -196,6 +248,18 @@ export function formatStatsAsText(stats: RoutingStats): string {
     lines.push("  Top decision reasons:")
     for (const r of stats.topReasons.slice(0, 5)) {
       lines.push(`    ${r.reason.padEnd(25)} ${r.count}`)
+    }
+  }
+
+  if (stats.subagent.completions > 0) {
+    const s = stats.subagent
+    lines.push("")
+    lines.push("  Subagent isolation:")
+    lines.push(`    Spawns: ${s.completions}  · success ${(s.successRate * 100).toFixed(0)}%  · avg ${Math.round(s.avgDurationMs)}ms`)
+    lines.push(`    Escalations: ${s.escalationsRequested} (${(s.escalationRate * 100).toFixed(0)}% of spawns)`)
+    const intents = Object.entries(s.byIntent).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    if (intents.length > 0) {
+      lines.push(`    By intent: ${intents.map(([k, v]) => `${k}=${v}`).join(", ")}`)
     }
   }
 

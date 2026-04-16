@@ -35,6 +35,15 @@ import { DecisionCache } from "./storage/decision-cache"
 import { clearSessionLock, withSessionLock } from "./session-mutex"
 import { clearThreadState, completePlanPhase, getThreadState } from "./storage/thread-state"
 import type { RoutingDecision, Tier } from "./types"
+import { decideExecutionPlan } from "./router/subagent-decision"
+import { buildSubagentPrompt } from "./router/subagent-prompt-builder"
+import {
+  appendSpawnIntent,
+  defaultSpawnLogPath,
+  sha256,
+  summarizeAnalysis,
+  type SpawnIntentRecord,
+} from "./storage/spawn-intent-log"
 
 /**
  * Router notification queue interface — shared with the fork's
@@ -60,7 +69,7 @@ function getRouterNotifications(): RouterNotificationsApi | null {
  *   ◇ Router → sonnet · rules_default
  *   · Router → haiku · all_minimalist_conditions_met · 0.97
  */
-function formatRouterNotification(decision: RoutingDecision): string {
+function formatRouterNotification(decision: RoutingDecision, executionMode?: "inline" | "spawn"): string {
   const tierSymbol: Record<string, string> = {
     opus: "◆",
     "opus-plan": "◆/◇",
@@ -72,14 +81,19 @@ function formatRouterNotification(decision: RoutingDecision): string {
   const colon = reason.indexOf(":")
   const reasonClean = colon > 0 ? reason.slice(colon + 1) : reason
   const conf = decision.confidence > 0 ? ` · ${decision.confidence.toFixed(2)}` : ""
-  return `${symbol} Router → ${decision.tier} · ${reasonClean}${conf}`
+  const mode = executionMode === "spawn" ? " ⇢ subagent" : ""
+  return `${symbol} Router → ${decision.tier} · ${reasonClean}${conf}${mode}`
 }
 
-function pushRouterNotification(sessionID: string, decision: RoutingDecision): void {
+function pushRouterNotification(
+  sessionID: string,
+  decision: RoutingDecision,
+  executionMode?: "inline" | "spawn",
+): void {
   const api = getRouterNotifications()
   if (!api) return
   try {
-    api.push(sessionID, formatRouterNotification(decision))
+    api.push(sessionID, formatRouterNotification(decision, executionMode))
   } catch {
     // Non-fatal — notification is a UX feature, not core routing
   }
@@ -413,6 +427,65 @@ export function createModelRouterHook(
         currentModelValue.providerID !== decision.providerID ||
         currentModelValue.modelID !== decision.modelID
 
+      // Subagent isolation decision. In shadow mode, we record the plan
+      // and the generated subagent prompt without altering behavior — the
+      // inline model swap below still happens. In spawn mode, the hook
+      // will (eventually) dispatch to the Task tool instead of swapping.
+      const executionPlan = decideExecutionPlan({
+        decision,
+        ctx: {
+          sessionID: input.sessionID,
+          turnNumber,
+          agent: resolvedAgent,
+          currentModel,
+          userPromptText: promptText,
+          previousDecisions: [],
+          currentTotalInputTokens: contextInfo.totalInputTokens,
+          contextLoad: contextInfo.load,
+          currentTierLabel,
+        },
+      })
+      const isolation = config.subagentIsolation
+      const isolationActive = isolation && isolation.mode !== "disabled" && executionPlan.mode === "spawn"
+
+      if (isolationActive && decision.analysis) {
+        const prompt = buildSubagentPrompt({
+          originalUserMessage: promptText,
+          plan: executionPlan,
+          analysis: decision.analysis,
+          parent: {
+            sessionID: input.sessionID,
+            modelID: currentModel?.modelID ?? "",
+            providerID: currentModel?.providerID ?? "",
+            cwd: ctx?.directory ?? process.cwd(),
+          },
+        })
+        const record: SpawnIntentRecord = {
+          version: 1,
+          timestamp: Date.now(),
+          sessionID: input.sessionID,
+          turnNumber,
+          parentAgent: resolvedAgent,
+          parentModel: {
+            providerID: currentModel?.providerID ?? "",
+            modelID: currentModel?.modelID ?? "",
+          },
+          plan: executionPlan,
+          decisionTier: decision.tier,
+          decisionReasons: decision.reasons,
+          analysisSummary: summarizeAnalysis(decision),
+          subagentPromptPreview: prompt.slice(0, 500),
+          subagentPromptSha256: await sha256(prompt),
+          mode: isolation.mode as "shadow" | "spawn",
+        }
+        await appendSpawnIntent(defaultSpawnLogPath(), record)
+
+        // TODO (spawn mode): call the spawner to actually launch the
+        // subagent. Kept behind the flag until the escalation loop + sync
+        // wait integration is wired to the Task tool or delegate-task sync
+        // poller. See router/subagent-decision.ts for the decision output.
+      }
+
       if (needsSwap) {
         output.message["model"] = {
           providerID: decision.providerID,
@@ -423,7 +496,7 @@ export function createModelRouterHook(
       // Push a synthetic notification to the fork's router-notifications
       // queue so the processor can render it as an inline history
       // message (same pattern as account switch notifications).
-      pushRouterNotification(input.sessionID, decision)
+      pushRouterNotification(input.sessionID, decision, executionPlan.mode)
 
       if (config.logDecisions) {
         await appendDecision(logPath, decision)

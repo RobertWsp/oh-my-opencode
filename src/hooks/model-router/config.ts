@@ -71,6 +71,28 @@ export const ModelRouterConfigSchema = z.object({
 
   /** Enable the feedback loop. */
   feedbackLoop: z.boolean().default(true),
+
+  /**
+   * Subagent isolation — when enabled, eligible tasks are spawned in
+   * isolated sub-sessions instead of swapping the main session's model.
+   * This preserves the main session's prompt cache.
+   *
+   * Modes:
+   *   - "disabled":   current behavior (inline model swap for all tiers).
+   *   - "shadow":     decide + log + log the generated subagent prompt,
+   *                   but DO NOT actually spawn. Safe mode for tuning.
+   *   - "spawn":      actually spawn isolated subagents via the Task tool
+   *                   when plan.mode === "spawn". Inline for the rest.
+   */
+  subagentIsolation: z
+    .object({
+      mode: z.enum(["disabled", "shadow", "spawn"]).default("disabled"),
+      /** Allow escalation signals from subagents to re-spawn with upgraded tier. */
+      allowEscalation: z.boolean().default(true),
+      /** Cap on escalation chain depth per parent session. */
+      maxEscalations: z.number().int().min(0).max(5).default(2),
+    })
+    .default(() => ({ mode: "disabled" as const, allowEscalation: true, maxEscalations: 2 })),
 })
 
 export type ModelRouterConfig = z.infer<typeof ModelRouterConfigSchema>

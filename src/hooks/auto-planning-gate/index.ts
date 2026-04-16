@@ -201,7 +201,8 @@ export function createAutoPlanningGateHook(options: AutoPlanningGateOptions) {
 
     // Inject the planning directive as a followup user message in the
     // same session. promptAsync (preferred, non-blocking) falls back to
-    // prompt if unavailable.
+    // prompt if unavailable. IMPORTANT: must call on the session object
+    // to preserve `this` binding (the SDK wraps _client internally).
     const injection = buildPrometheusInjection(params.userText, verdict.reason)
     const body = {
       parts: [createInternalAgentTextPart(injection)],
@@ -219,18 +220,22 @@ export function createAutoPlanningGateHook(options: AutoPlanningGateOptions) {
           query?: { directory?: string }
         }) => Promise<unknown>
       }
-      const invoke = session.promptAsync ?? session.prompt
-      if (!invoke) {
+      if (!session.promptAsync && !session.prompt) {
         log(`[${HOOK_NAME}] neither promptAsync nor prompt available`, {
           sessionID: params.sessionID,
         })
         return
       }
-      await invoke({
+      const args = {
         path: { id: params.sessionID },
         body,
         query: { directory: options.ctx.directory },
-      })
+      }
+      if (session.promptAsync) {
+        await session.promptAsync(args)
+      } else if (session.prompt) {
+        await session.prompt(args)
+      }
       state.injected = true
       log(`[${HOOK_NAME}] planning directive injected`, {
         sessionID: params.sessionID,
@@ -244,41 +249,54 @@ export function createAutoPlanningGateHook(options: AutoPlanningGateOptions) {
     }
   }
 
+  // Event handler — only for session cleanup (state clearing). The
+  // main gate logic runs on `chat.message` which provides the
+  // synchronous user prompt + parts directly.
   const eventHandler = async ({ event }: { event: { type: string; properties?: unknown } }) => {
     const props = event.properties as Record<string, unknown> | undefined
-
     if (event.type === "session.deleted" || event.type === "session.compacted") {
       const info = (props?.info as { id?: string } | undefined) ?? undefined
       const sessionID = (props?.sessionID as string | undefined) ?? info?.id
       if (sessionID) sessions.delete(sessionID)
-      return
     }
+  }
 
-    if (event.type !== "message.updated") return
+  /**
+   * chat.message handler — fires on every user turn with the full parts
+   * array. We gate on `analyzed` flag (per session) so the analyzer
+   * runs only on the FIRST user turn. This avoids re-analyzing during
+   * multi-turn sessions.
+   */
+  const chatMessageHandler = async (
+    input: { sessionID?: string; agent?: string },
+    output: { parts?: Array<{ type?: string; text?: string; synthetic?: boolean }> },
+  ): Promise<void> => {
+    const sessionID = input.sessionID
+    if (!sessionID) return
 
-    const info = props?.info as Record<string, unknown> | undefined
-    const sessionID = info?.sessionID as string | undefined
-    const role = info?.role as string | undefined
-    if (!sessionID || role !== "user") return
+    const state = getState(sessionID)
+    if (state.analyzed) return
 
-    const parts = props?.parts as Array<{ type?: string; text?: string; synthetic?: boolean }> | undefined
-    if (!parts || parts.length === 0) return
-
-    // Build the user prompt text from text parts; skip synthetic events
-    // (hook-injected messages we ourselves produce).
+    const parts = output.parts ?? []
     const userText = parts
       .filter((p) => p.type === "text" && !p.synthetic && typeof p.text === "string")
       .map((p) => (p.text ?? "").trim())
       .filter((t) => t.length > 0)
       .join("\n")
     if (!userText) return
-
     // Skip if our own injection text is present (defensive).
     if (userText.includes("<auto_planning_gate>")) return
 
-    const agent = (info?.agent as string | undefined) ?? "primary"
+    const agent = input.agent ?? "primary"
 
-    // Fire and forget — the gate must NOT block the normal event loop.
+    log(`[${HOOK_NAME}] chat.message triggered`, {
+      sessionID,
+      agent,
+      userTextLen: userText.length,
+      userTextPreview: userText.slice(0, 120),
+    })
+
+    // Fire and forget — the gate must NOT block the normal chat loop.
     analyzeAndMaybeInject({ sessionID, userText, agent }).catch((error) => {
       log(`[${HOOK_NAME}] analyzeAndMaybeInject threw`, {
         sessionID,
@@ -288,6 +306,7 @@ export function createAutoPlanningGateHook(options: AutoPlanningGateOptions) {
   }
 
   return {
+    "chat.message": chatMessageHandler,
     event: eventHandler,
   }
 }

@@ -5745,6 +5745,41 @@
             "feedbackLoop": {
               "default": true,
               "type": "boolean"
+            },
+            "subagentIsolation": {
+              "default": {
+                "mode": "disabled",
+                "allowEscalation": true,
+                "maxEscalations": 2
+              },
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "default": "disabled",
+                  "type": "string",
+                  "enum": [
+                    "disabled",
+                    "shadow",
+                    "spawn"
+                  ]
+                },
+                "allowEscalation": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "maxEscalations": {
+                  "default": 2,
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 5
+                }
+              },
+              "required": [
+                "mode",
+                "allowEscalation",
+                "maxEscalations"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -5756,7 +5791,8 @@
             "agentOverrides",
             "logDecisions",
             "statusLine",
-            "feedbackLoop"
+            "feedbackLoop",
+            "subagentIsolation"
           ],
           "additionalProperties": false
         }

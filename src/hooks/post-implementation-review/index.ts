@@ -159,16 +159,20 @@ export function createPostImplementationReviewHook(options: PostImplementationRe
         query?: { directory?: string }
       }) => Promise<unknown>
     }
-    const invoke = session.promptAsync ?? session.prompt
-    if (!invoke) {
+    if (!session.promptAsync && !session.prompt) {
       log(`[${HOOK_NAME}] neither promptAsync nor prompt available`, { sessionID })
       return
     }
-    await invoke({
+    const args = {
       path: { id: sessionID },
       body,
       query: { directory: options.ctx.directory },
-    })
+    }
+    if (session.promptAsync) {
+      await session.promptAsync(args)
+    } else if (session.prompt) {
+      await session.prompt(args)
+    }
   }
 
   const toolExecuteAfter = async (input: ToolInput, output: ToolOutput): Promise<void> => {

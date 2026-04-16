@@ -6,9 +6,16 @@ import { renderFewShotSection } from "./few-shot-examples"
  */
 
 export function buildAnalyzerSystemPrompt(): string {
-  return [SYSTEM_ROLE, DIMENSIONS_SPEC, DECISION_MATRIX_SUMMARY, EVIDENCE_REQUIREMENTS, FEW_SHOT_HEADER, renderFewShotSection(), FINAL_INSTRUCTIONS].join(
-    "\n\n",
-  )
+  return [
+    SYSTEM_ROLE,
+    DIMENSIONS_SPEC,
+    DECISION_MATRIX_SUMMARY,
+    SUBAGENT_EXTENSIONS_SPEC,
+    EVIDENCE_REQUIREMENTS,
+    FEW_SHOT_HEADER,
+    renderFewShotSection(),
+    FINAL_INSTRUCTIONS,
+  ].join("\n\n")
 }
 
 export function buildAnalyzerUserMessage(ctx: {
@@ -139,6 +146,47 @@ prevents one-sided analyses. Write 1-2 sentences explaining why a different tier
 might also be defensible.
 </evidence_rules>`
 
+const SUBAGENT_EXTENSIONS_SPEC = `<subagent_extensions>
+In addition to the 9 dimensions, you MUST also classify three extension fields.
+These drive the subagent isolation decision (spawn isolated subagent vs swap model
+inline in the main session):
+
+10. complexity_uncertainty — how confident you are in your COMPLEXITY estimate
+    (not in the model recommendation):
+    - high_confidence: evidence is clear; complexity will not surprise us
+    - medium_confidence: some aspects unclear; could go either way
+    - low_confidence: task may hide significant complexity behind a simple surface
+    uncertainty_reason: one sentence — what signal might flip the estimate
+
+11. subagent_suitable — can this task run ISOLATED in a subagent?
+    TRUE when:
+    - iteration_profile is single_shot OR short_dialog
+    - context_requirements is minimal OR moderate (not repo_wide)
+    - risk_level is low, medium or high (not critical)
+    - task is self-contained: doesn't require mid-task interaction with main session
+    FALSE when:
+    - iteration_profile is long_session or marathon (needs main's running state)
+    - context_requirements is repo_wide (needs main's explored context)
+    - risk_level is critical (main session should own the decisions)
+    - task is inherently multi-turn with the user in the loop
+    subagent_isolation_reason: brief justification.
+
+12. detected_intent — match the user's high-level intent to one of:
+    - commit_push: create a commit and push (git ops, no logic work)
+    - merge_simple: merge branches/PRs when no conflict or ≤2 files
+    - merge_complex: merge with conflicts OR ≥3 files touched
+    - refactor_architectural: structural refactor touching multiple modules
+    - security_audit: review for vulnerabilities
+    - bug_investigation: root-cause a reported bug
+    - docs_update: documentation-only change
+    - test_write: add/modify tests only
+    - lookup_qa: answer a question or look up info
+    - none: doesn't fit any intent cleanly
+
+These extensions override defaults when matched clearly (e.g. detected_intent ==
+commit_push → always haiku+subagent regardless of other signals).
+</subagent_extensions>`
+
 const FEW_SHOT_HEADER = `<examples>
 Here are 8 analyses on diverse example prompts. Study them carefully to calibrate
 your own classifications. Note how each evidence field is specific to the prompt.`
@@ -149,12 +197,16 @@ const FINAL_INSTRUCTIONS = `</examples>
 Respond with EXACTLY ONE JSON object matching the schema shown in the examples
 above. No prose before or after. No markdown code fences. No explanations.
 
-The JSON must include every field listed in the examples:
+The JSON must include every field listed in the examples PLUS the five subagent
+extension fields (complexity_uncertainty, uncertainty_reason, subagent_suitable,
+subagent_isolation_reason, detected_intent):
   task_type, task_type_evidence, reasoning_depth, reasoning_depth_evidence,
   scope_breadth, estimated_files_touched, context_requirements, ambiguity,
   ambiguity_reasons, risk_level, risk_justification, novelty,
   detected_technologies, domain_expertise, iteration_profile, recommended_model,
-  confidence, primary_reasoning, contrarian_check
+  confidence, primary_reasoning, contrarian_check,
+  complexity_uncertainty, uncertainty_reason, subagent_suitable,
+  subagent_isolation_reason, detected_intent
 
 All reasoning goes into the evidence/justification/reasoning fields of the JSON —
 not as prose outside of it. Your reply MUST start with the character \`{\` and
