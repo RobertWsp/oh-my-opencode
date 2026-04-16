@@ -1,5 +1,6 @@
 import type { BackgroundManager } from "../../features/background-agent"
 import { getMainSessionID, getSessionAgent } from "../../features/claude-code-session-state"
+import { getTaskToastManager } from "../../features/task-toast-manager"
 import { log } from "../../shared/logger"
 import { createInternalAgentTextPart, resolveInheritedPromptTools } from "../../shared"
 import { isAbortError } from "../../shared/is-abort-error"
@@ -15,9 +16,17 @@ import {
 const HOOK_NAME = "unstable-agent-babysitter"
 const DEFAULT_TIMEOUT_MS = 120000
 const COOLDOWN_MS = 5 * 60 * 1000
+const DEFAULT_STALL_ABORT_AFTER_MS = 180000
+
+type StallEscalationConfig = {
+  enabled?: boolean
+  abortAfterMs?: number
+  notify?: boolean
+}
 
 type BabysittingConfig = {
   timeout_ms?: number
+  stallEscalation?: StallEscalationConfig
 }
 
 type BabysitterContext = {
@@ -52,7 +61,7 @@ type BabysitterContext = {
 }
 
 type BabysitterOptions = {
-  backgroundManager: Pick<BackgroundManager, "getTasksByParentSession">
+  backgroundManager: Pick<BackgroundManager, "getTasksByParentSession" | "cancelTask">
   config?: BabysittingConfig
 }
 
@@ -121,6 +130,76 @@ async function getThinkingSummary(ctx: BabysitterContext, sessionID: string): Pr
 export function createUnstableAgentBabysitterHook(ctx: BabysitterContext, options: BabysitterOptions) {
   const reminderCooldowns = new Map<string, number>()
   const cancelledSessions = new Set<string>()
+  // Stall escalation state: tracks tasks that received a reminder and are
+  // being watched for continued silence. Cleared on any task activity.
+  const stallWatchers = new Map<string, { reminderAt: number; lastActivityAt: number }>()
+
+  const stallCfg = options.config?.stallEscalation
+  const stallEnabled = stallCfg?.enabled !== false
+  const stallAbortAfterMs = Math.max(stallCfg?.abortAfterMs ?? DEFAULT_STALL_ABORT_AFTER_MS, 30000)
+  const stallNotify = stallCfg?.notify !== false
+
+  const clearStallWatcher = (taskId: string): void => {
+    stallWatchers.delete(taskId)
+  }
+
+  const markStallActivity = (taskId: string): void => {
+    const watcher = stallWatchers.get(taskId)
+    if (!watcher) return
+    watcher.lastActivityAt = Date.now()
+  }
+
+  const showStallToast = (task: { id: string; description: string }): void => {
+    if (!stallNotify) return
+    try {
+      const toastManager = getTaskToastManager() as unknown as {
+        client?: { tui?: { showToast?: (opts: { body: { title: string; message: string; variant: string; duration: number } }) => Promise<unknown> } }
+      } | null
+      const tui = toastManager?.client?.tui
+      if (!tui?.showToast) return
+      tui.showToast({
+        body: {
+          title: "Subagent stalled — aborted",
+          message: `Task "${task.description.slice(0, 80)}" did not respond after reminder. It has been aborted.`,
+          variant: "warning",
+          duration: 10000,
+        },
+      }).catch((error: unknown) => {
+        log(`[${HOOK_NAME}] Stall toast failed`, { taskId: task.id, error: String(error) })
+      })
+    } catch (error) {
+      log(`[${HOOK_NAME}] Stall toast error`, { taskId: task.id, error: String(error) })
+    }
+  }
+
+  const escalateIfStalled = async (task: { id: string; description: string }): Promise<void> => {
+    const watcher = stallWatchers.get(task.id)
+    if (!watcher) return
+
+    const now = Date.now()
+    const silentSince = Math.max(watcher.reminderAt, watcher.lastActivityAt)
+    const silentMs = now - silentSince
+    if (silentMs < stallAbortAfterMs) return
+
+    stallWatchers.delete(task.id)
+    log(`[${HOOK_NAME}] Stall escalation: aborting task`, {
+      taskId: task.id,
+      silentMs,
+      abortAfterMs: stallAbortAfterMs,
+    })
+
+    showStallToast(task)
+
+    try {
+      await options.backgroundManager.cancelTask(task.id, {
+        source: "stall-escalation",
+        reason: "No activity after babysitter reminder",
+        abortSession: true,
+      })
+    } catch (error) {
+      log(`[${HOOK_NAME}] Stall escalation abort failed`, { taskId: task.id, error: String(error) })
+    }
+  }
 
   const eventHandler = async ({ event }: { event: { type: string; properties?: unknown } }) => {
     const props = event.properties as Record<string, unknown> | undefined
@@ -152,6 +231,10 @@ export function createUnstableAgentBabysitterHook(ctx: BabysitterContext, option
       if (!sessionID || (role !== "user" && role !== "assistant")) return
 
       cancelledSessions.delete(sessionID)
+      // Task activity detected — reset stall watchers for any task with this session
+      for (const [taskId, watcher] of stallWatchers) {
+        if (watcher) markStallActivity(taskId)
+      }
       return
     }
 
@@ -160,6 +243,10 @@ export function createUnstableAgentBabysitterHook(ctx: BabysitterContext, option
       if (!sessionID) return
 
       cancelledSessions.delete(sessionID)
+      // Tool activity — reset stall watcher for any task in this session
+      for (const [taskId, watcher] of stallWatchers) {
+        if (watcher) markStallActivity(taskId)
+      }
       return
     }
 
@@ -191,8 +278,17 @@ export function createUnstableAgentBabysitterHook(ctx: BabysitterContext, option
     const now = Date.now()
 
     for (const task of tasks) {
-      if (task.status !== "running") continue
+      if (task.status !== "running") {
+        // Task is done (completed/cancelled/error) — drop any watcher
+        clearStallWatcher(task.id)
+        continue
+      }
       if (!isUnstableTask(task)) continue
+
+      // If this task has an active stall watcher, check for escalation first.
+      if (stallEnabled && stallWatchers.has(task.id)) {
+        await escalateIfStalled({ id: task.id, description: task.description })
+      }
 
       const lastMessageAt = task.progress?.lastMessageAt
       if (!lastMessageAt) continue
@@ -226,6 +322,13 @@ export function createUnstableAgentBabysitterHook(ctx: BabysitterContext, option
         })
         reminderCooldowns.set(task.id, now)
         log(`[${HOOK_NAME}] Reminder injected`, { taskId: task.id, sessionID: mainSessionID })
+        if (stallEnabled) {
+          stallWatchers.set(task.id, { reminderAt: now, lastActivityAt: now })
+          log(`[${HOOK_NAME}] Stall watcher armed`, {
+            taskId: task.id,
+            abortAfterMs: stallAbortAfterMs,
+          })
+        }
       } catch (error) {
         log(`[${HOOK_NAME}] Reminder injection failed`, { taskId: task.id, error: String(error) })
       }

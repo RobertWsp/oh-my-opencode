@@ -6023,6 +6023,30 @@
         "timeout_ms": {
           "default": 120000,
           "type": "number"
+        },
+        "stallEscalation": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "abortAfterMs": {
+              "default": 180000,
+              "type": "number",
+              "minimum": 30000
+            },
+            "notify": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled",
+            "abortAfterMs",
+            "notify"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
