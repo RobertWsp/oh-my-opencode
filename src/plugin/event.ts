@@ -293,6 +293,20 @@ export function createEventHandler(args: {
     // cleans up thread state on session.deleted/compacted. Runs near last so
     // other hooks can still read thread state if needed.
     await runEventHookSafely("modelRouter", hooks.modelRouter?.event, input);
+    // Auto-Planning Gate — intercepts first user message, classifies via
+    // analyzer, and injects Prometheus into the session when the task
+    // merits formal planning.
+    await runEventHookSafely("autoPlanningGate", hooks.autoPlanningGate?.event, input);
+    // Post-Implementation Review — session-cleanup handler only;
+    // main logic fires in tool.execute.after (see dispatchToolExecuteAfter).
+    const pirEvent = (hooks.postImplementationReview as unknown as {
+      event?: (input: { event: { type: string; properties?: unknown } }) => Promise<void>
+    } | null)?.event;
+    await runEventHookSafely(
+      "postImplementationReview",
+      pirEvent as unknown as (input: { event: unknown }) => unknown,
+      input,
+    );
     // Feedback loop captures outcome signals (errors, idle, tool calls)
     // and enriches the routing log with outcome records. Runs LAST so
     // all other hooks have finished mutating state first.

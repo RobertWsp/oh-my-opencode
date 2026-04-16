@@ -30,6 +30,8 @@ import {
 import { createAnthropicEffortHook } from "../../hooks/anthropic-effort"
 import { createModelRouterHook } from "../../hooks/model-router"
 import { createFeedbackLoopHook } from "../../hooks/feedback-loop"
+import { createAutoPlanningGateHook } from "../../hooks/auto-planning-gate"
+import { createPostImplementationReviewHook } from "../../hooks/post-implementation-review"
 import {
   detectExternalNotificationPlugin,
   getNotificationConflictWarning,
@@ -67,6 +69,8 @@ export type SessionHooks = {
   legacyPluginToast: ReturnType<typeof createLegacyPluginToastHook> | null
   modelRouter: ReturnType<typeof createModelRouterHook> | null
   feedbackLoop: ReturnType<typeof createFeedbackLoopHook> | null
+  autoPlanningGate: ReturnType<typeof createAutoPlanningGateHook> | null
+  postImplementationReview: ReturnType<typeof createPostImplementationReviewHook> | null
 }
 
 export function createSessionHooks(args: {
@@ -291,6 +295,25 @@ export function createSessionHooks(args: {
         }))
     : null
 
+  // Auto-Planning Gate — on the first user message of a session, runs the
+  // analyzer (same Sonnet 4.6 used by model-router) and, if the task is
+  // architectural / complex_refactor / high-risk standard_implementation,
+  // programmatically dispatches Prometheus before normal work. Reuses the
+  // analyzer infrastructure; no extra credentials required.
+  const autoPlanningGate = isHookEnabled("auto-planning-gate")
+    ? safeHook("auto-planning-gate", () =>
+        createAutoPlanningGateHook({ ctx }))
+    : null
+
+  // Post-Implementation Review — when `task(subagent_type="hephaestus")`
+  // completes with a substantial output, injects a Momus review into the
+  // parent session. Sisyphus sees it as its next turn and runs the review
+  // → fix loop before marking the work done.
+  const postImplementationReview = isHookEnabled("post-implementation-review")
+    ? safeHook("post-implementation-review", () =>
+        createPostImplementationReviewHook({ ctx }))
+    : null
+
 
   return {
     contextWindowMonitor,
@@ -319,5 +342,7 @@ export function createSessionHooks(args: {
     legacyPluginToast,
     modelRouter,
     feedbackLoop,
+    autoPlanningGate,
+    postImplementationReview,
   }
 }

@@ -60,6 +60,8 @@ export const HookNameSchema = z.enum([
   "skill-compaction-reloader",
   "model-router",
   "feedback-loop",
+  "auto-planning-gate",
+  "post-implementation-review",
 ]);
 
 export type HookName = z.infer<typeof HookNameSchema>;

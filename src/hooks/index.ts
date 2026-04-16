@@ -95,3 +95,15 @@ export { createLegacyPluginToastHook } from "./legacy-plugin-toast";
 export { createSkillErrorReactorHook } from "./skill-error-reactor";
 export { createSkillDomainDetectorHook } from "./skill-domain-detector";
 export { createSkillCompactionReloaderHook } from "./skill-compaction-reloader";
+export {
+  createAutoPlanningGateHook,
+  type AutoPlanningGateConfig,
+  type AutoPlanningGateContext,
+  type AutoPlanningGateOptions,
+} from "./auto-planning-gate";
+export {
+  createPostImplementationReviewHook,
+  type PostImplementationReviewConfig,
+  type PostImplementationReviewContext,
+  type PostImplementationReviewOptions,
+} from "./post-implementation-review";
