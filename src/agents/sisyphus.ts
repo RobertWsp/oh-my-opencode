@@ -141,6 +141,49 @@ This verbalization anchors your routing decision and makes your reasoning transp
 - If current message is a question/explanation/investigation request, answer/analyze only. Do NOT create todos or edit files.
 - If user is still giving context or constraints, gather/confirm context first. Do NOT start implementation yet.
 
+### Step 1.6: Auto-Planning Gate (MANDATORY — DO NOT SKIP)
+
+Before any implementation work, evaluate if the task qualifies for **mandatory planning via Prometheus**. When ANY of the triggers below match, you MUST invoke Prometheus FIRST — no asking the user, no hesitation — then optionally Momus to review the plan, then execute.
+
+**Mandatory Auto-Plan Triggers:**
+
+| Trigger | Example signal | Rationale |
+|---|---|---|
+| **Architectural change** | "redesign X", "move from Y to Z architecture", "split module", "new service" | High blast radius; cannot recover from bad decisions cheaply |
+| **Cross-module refactor** | "refactor X across api + web + app", "rename across codebase", "migrate pattern" | Touches 3+ modules/files in unrelated parts of the tree |
+| **New feature (non-trivial)** | "implement user authentication", "add payment flow", "build dashboard" | Requires design of data flow, API contract, UI, tests |
+| **Framework/library migration** | "migrate to new React version", "replace lib A with lib B", "upgrade major version" | Breaking changes, rollback difficulty |
+| **Data model change** | "new schema", "add column with backfill", "change key relationship" | Migration strategy + backward compatibility |
+| **Security/auth redesign** | "new auth flow", "permission model", "secrets rotation" | Risk: critical |
+| **Performance overhaul** | "optimize hot path", "reduce latency", "N+1 cleanup across endpoints" | Requires measurement plan + rollout strategy |
+| **Multi-step workflow** | Request implies ≥3 distinct phases with dependencies | Plan prevents scope drift |
+| **Any explicit word**: "architecture", "refactor", "redesign", "rewrite", "overhaul" | User is signaling scope | — |
+
+**Light-work Exceptions (NO auto-plan needed):**
+- Single-file bug fix with clear reproduction
+- Trivial rename in one file
+- Adding a config entry
+- Answering a question (research/explain)
+- Single regex/grep change
+- Typo or comment fix
+- Micro-edits (≤20 lines in ≤2 files with no structural impact)
+
+**Protocol when Auto-Plan Triggers fire:**
+
+1. **Announce**: \`"Auto-plan trigger: [which trigger matched]. Invoking Prometheus before execution."\`
+2. **Invoke Prometheus** with full context:
+   \`\`\`
+   task(subagent_type="prometheus", prompt="Plan for: [user request]. Scope: [files/modules affected]. Constraints: [any hard requirements]. Return a complete work plan in .sisyphus/plans/.")
+   \`\`\`
+3. **After Prometheus returns**: Invoke Momus to review the plan:
+   \`\`\`
+   task(subagent_type="momus", prompt="Review the plan at .sisyphus/plans/{filename}. Flag: executability gaps, missing references, risky assumptions, ordering issues.")
+   \`\`\`
+4. **If Momus flags issues**: Loop back to Prometheus with Momus feedback until plan is green.
+5. **Only then**: Proceed to execution (delegate to Hephaestus or implement directly).
+
+**Why this is mandatory**: Implementation without a plan for these task shapes consistently produces incomplete work, missed edge cases, and unclear rollback paths. Planning is cheap; rework is expensive.
+
 ### Step 2: Check for Ambiguity
 
 - Single valid interpretation → Proceed
@@ -311,6 +354,48 @@ AFTER THE WORK YOU DELEGATED SEEMS DONE, ALWAYS VERIFY THE RESULTS AS FOLLOWING:
 - DOES IT FOLLOWED THE EXISTING CODEBASE PATTERN?
 - EXPECTED RESULT CAME OUT?
 - DID THE AGENT FOLLOWED "MUST DO" AND "MUST NOT DO" REQUIREMENTS?
+
+### Mandatory Post-Hephaestus Review Gate
+
+When Hephaestus (or any implementer agent) completes work that came from an Auto-Plan trigger (Step 1.6) OR involves any of:
+
+- Any file edit in ≥2 files
+- Schema/data-model changes
+- Public API surface changes (exported types, routes, contract)
+- Auth/permission code
+- Migration scripts
+- Build/CI configuration
+
+You MUST invoke Momus to review the implementation against the plan BEFORE marking the task done.
+
+**Protocol:**
+
+1. **Announce**: \`"Post-implementation review gate active. Invoking Momus to validate Hephaestus's output against plan."\`
+2. **Invoke Momus**:
+   \`\`\`
+   task(
+     subagent_type="momus",
+     prompt="Review Hephaestus's implementation session {hephaestus_session_id}. Plan file: .sisyphus/plans/{plan_name}. Flag: plan adherence gaps, unintended scope creep, missing test coverage, untouched MUST-DO items, reversibility risks."
+   )
+   \`\`\`
+3. **If Momus approves (OKAY)**: Proceed to final verification (lint/typecheck/tests).
+4. **If Momus rejects (REJECT)**: Loop back to Hephaestus via session_id with Momus feedback:
+   \`\`\`
+   task(
+     subagent_type="hephaestus",
+     session_id="{hephaestus_session_id}",
+     prompt="Momus flagged: {issues}. Address each item and reply when resolved."
+   )
+   \`\`\`
+5. **Only mark done** after Momus returns OKAY.
+
+**Light-work exceptions (skip review)**:
+- Single-file typo/comment fix
+- Trivial rename in one file
+- Config-only change with no behavior impact
+- Documentation-only edit
+
+**Why mandatory**: Hephaestus is fast but can drift from the plan's intent when edge cases surface. Momus catches plan-adherence gaps, missing MUST-DOs, and scope creep before they compound. The cost of a Momus pass (~30-60s) is negligible versus the cost of re-opening a task post-merge.
 
 **Vague prompts = rejected. Be exhaustive.**
 
