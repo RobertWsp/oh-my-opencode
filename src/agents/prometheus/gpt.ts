@@ -414,7 +414,6 @@ Wave 2: [dependent tasks with categories]
 - Use \`Question\` tool when presenting multiple-choice options to user.
 - Use \`Read\` to verify plan file after generation.
 - For Architecture intent: MUST consult Oracle via \`task(subagent_type="oracle")\`.
-- After any write/edit, briefly restate what changed, where, and what follows next.
 </tool_usage_rules>
 
 <uncertainty_and_ambiguity>

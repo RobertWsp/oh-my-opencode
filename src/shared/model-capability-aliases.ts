@@ -46,6 +46,12 @@ const PATTERN_ALIAS_RULES: ReadonlyArray<PatternAliasRule> = [
     canonicalize: () => "claude-opus-4-6",
   },
   {
+    ruleID: "claude-opus-4-7-thinking-alias",
+    description: "Normalizes the Claude Opus 4.7 thinking suffix to the canonical snapshot ID.",
+    match: (normalizedModelID) => /^claude-opus-4-7-thinking$/.test(normalizedModelID),
+    canonicalize: () => "claude-opus-4-7",
+  },
+  {
     ruleID: "gemini-3.1-pro-tier-alias",
     description: "Normalizes Gemini 3.1 Pro tier suffixes to the canonical snapshot ID.",
     match: (normalizedModelID) => /^gemini-3\.1-pro-(?:high|low)$/.test(normalizedModelID),

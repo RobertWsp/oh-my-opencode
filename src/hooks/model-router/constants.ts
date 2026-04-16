@@ -12,7 +12,7 @@ import type { Tier } from "./types"
 export const MODEL_IDS: Record<Exclude<Tier, "opus-plan">, { providerID: string; modelID: string }> = {
   haiku: { providerID: "anthropic", modelID: "claude-haiku-4-5" },
   sonnet: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
-  opus: { providerID: "anthropic", modelID: "claude-opus-4-6" },
+  opus: { providerID: "anthropic", modelID: "claude-opus-4-7" },
 }
 
 /**

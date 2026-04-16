@@ -178,7 +178,6 @@ ${librarianSection}
 <tool_usage_rules>
 - Parallelize independent tool calls: multiple file reads, grep searches, agent fires - all at once
 - Explore/Librarian = background grep. ALWAYS \`run_in_background=true\`, ALWAYS parallel
-- After any file edit: restate what changed, where, and what validation follows
 - Prefer tools over guessing whenever you need specific data (files, configs, patterns)
 </tool_usage_rules>
 
@@ -223,7 +222,6 @@ task(subagent_type="librarian", run_in_background=true, load_skills=[], descript
 
 Never chain together bash commands with separators like \`&&\`, \`;\`, or \`|\` in a single call. Run each command as a separate tool invocation.
 
-After any file edit, briefly restate what changed, where, and what validation follows.
 
 Once you delegate exploration to background agents, do not repeat the same search yourself. Continue only with non-overlapping work only. Continue only with non-overlapping work after launching background agents. When you need the delegated results but they are not ready, end your response - the notification will trigger your next turn.
 
