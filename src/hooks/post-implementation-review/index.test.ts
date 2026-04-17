@@ -205,6 +205,56 @@ describe("post-implementation-review", () => {
     expect(promptCalls.length).toBe(1)
   })
 
+  test("triggers via output.metadata.agent when args.subagent_type is absent", async () => {
+    const ctx = makeCtx(promptCalls)
+    const hook = createPostImplementationReviewHook({ ctx })
+
+    // Real OpenCode runtime shape: tool.execute.after receives
+    // {tool, sessionID, callID} only; agent info comes via metadata.
+    await hook["tool.execute.after"]!(
+      { sessionID: "ses_meta", callID: "c", tool: "task" },
+      {
+        output: "Applied diff across 3 files. " + "y".repeat(500),
+        metadata: { agent: "Hephaestus (Deep Agent)", sessionID: "ses_sub_meta" },
+      },
+    )
+    expect(promptCalls.length).toBe(1)
+    expect(promptCalls[0].text).toContain("ses_sub_meta")
+    expect(promptCalls[0].text).toContain("hephaestus")
+  })
+
+  test("normalizes zero-width markers in subagent name (router tier tracking)", async () => {
+    const ctx = makeCtx(promptCalls)
+    const hook = createPostImplementationReviewHook({ ctx })
+
+    await hook["tool.execute.after"]!(
+      { sessionID: "ses_zw", callID: "c", tool: "task" },
+      {
+        output: "z".repeat(600),
+        // zero-width space embedded (U+200B) — router tier marker
+        metadata: { agent: "hephaestus\u200B", sessionID: "ses_sub_zw" },
+      },
+    )
+    expect(promptCalls.length).toBe(1)
+  })
+
+  test("boundary: output exactly at minOutputChars triggers; 1 char below skips", async () => {
+    const ctx = makeCtx(promptCalls)
+    const hook = createPostImplementationReviewHook({ ctx })
+
+    await hook["tool.execute.after"]!(
+      { sessionID: "ses_b1", callID: "c", tool: "task", args: { subagent_type: "hephaestus", prompt: "x" } },
+      { output: "x".repeat(399) },
+    )
+    expect(promptCalls.length).toBe(0)
+
+    await hook["tool.execute.after"]!(
+      { sessionID: "ses_b2", callID: "c", tool: "task", args: { subagent_type: "hephaestus", prompt: "x" } },
+      { output: "x".repeat(400) },
+    )
+    expect(promptCalls.length).toBe(1)
+  })
+
   test("clears session cooldown on session.deleted", async () => {
     const ctx = makeCtx(promptCalls)
     const hook = createPostImplementationReviewHook({ ctx, config: { cooldownMs: 60_000 } })
