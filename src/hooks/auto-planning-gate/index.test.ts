@@ -1,4 +1,7 @@
 import { describe, expect, test, beforeEach, mock } from "bun:test"
+import * as fs from "fs"
+import * as os from "os"
+import * as path from "path"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { createAutoPlanningGateHook } from "./index"
 import type { TaskAnalysis } from "../model-router/types"
@@ -39,8 +42,11 @@ function makeCtx(promptCalls: Array<{ sessionID: string; text: string }>) {
       return { ok: true }
     },
   }
+  // Isolated tmpdir per test ctx so persistSession's state file doesn't
+  // bleed across tests.
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "auto-plan-gate-test-"))
   return {
-    directory: "/tmp/test",
+    directory,
     client: { session } as unknown as PluginInput["client"],
   }
 }
@@ -384,5 +390,39 @@ describe("auto-planning-gate", () => {
     await hook["chat.message"]({ sessionID: "ses_1", agent: "primary" }, { parts: [] })
     await new Promise((r) => setTimeout(r, 30))
     expect(promptCalls.length).toBe(0)
+  })
+
+  test("persisted state: second hook instance skips previously-analyzed session", async () => {
+    mockRunAnalyzerResult = {
+      ok: true,
+      analysis: mockAnalysis({ task_type: "architectural" }),
+      durationMs: 100,
+    }
+    const ctx = makeCtx(promptCalls)
+    const hook1 = createAutoPlanningGateHook({ ctx })
+
+    await hook1["chat.message"]({ sessionID: "ses_persist_1", agent: "primary" }, {
+      parts: [{ type: "text", text: "Redesign X" }],
+    })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(promptCalls.length).toBe(1)
+
+    // Simulate a new process: create a fresh hook instance against the
+    // same ctx directory. The persisted state file should cause the
+    // session to be marked pre-analyzed, skipping re-injection.
+    const freshPromptCalls: Array<{ sessionID: string; text: string }> = []
+    const ctx2 = {
+      directory: ctx.directory, // same directory → same state file
+      client: makeCtx(freshPromptCalls).client,
+    }
+    const hook2 = createAutoPlanningGateHook({ ctx: ctx2 })
+
+    await hook2["chat.message"]({ sessionID: "ses_persist_1", agent: "primary" }, {
+      parts: [{ type: "text", text: "Redesign X again" }],
+    })
+    await new Promise((r) => setTimeout(r, 50))
+
+    // freshPromptCalls should be empty — session was already analyzed.
+    expect(freshPromptCalls.length).toBe(0)
   })
 })

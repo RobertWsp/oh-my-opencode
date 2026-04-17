@@ -1,3 +1,5 @@
+import * as fs from "fs"
+import * as path from "path"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { runAnalyzer, type AnalyzerResult } from "../model-router/analyzer/run-analyzer"
 import type { TaskAnalysis } from "../model-router/types"
@@ -125,6 +127,46 @@ function buildPrometheusInjection(userPrompt: string, reason: string): string {
   ].join("\n")
 }
 
+/**
+ * Persistent state file used to remember which sessions already went
+ * through the gate. Survives process restarts (opencode run is a new
+ * process each time) so `opencode run -s <id>` doesn't re-analyze a
+ * session that was already classified in a previous invocation.
+ */
+const STATE_FILE_NAME = ".auto-planning-gate-state.json"
+
+function stateFilePath(directory: string): string {
+  return path.join(directory, ".sisyphus", STATE_FILE_NAME)
+}
+
+function loadPersistedSessions(directory: string): Set<string> {
+  try {
+    const raw = fs.readFileSync(stateFilePath(directory), "utf8")
+    const parsed = JSON.parse(raw) as { analyzedSessions?: string[] }
+    if (Array.isArray(parsed?.analyzedSessions)) {
+      return new Set(parsed.analyzedSessions.filter((s) => typeof s === "string"))
+    }
+  } catch {
+    // Missing or corrupt file — treat as empty state.
+  }
+  return new Set()
+}
+
+function persistSession(directory: string, sessionID: string): void {
+  try {
+    const file = stateFilePath(directory)
+    const dir = path.dirname(file)
+    fs.mkdirSync(dir, { recursive: true })
+    const existing = loadPersistedSessions(directory)
+    existing.add(sessionID)
+    // Trim to last 200 sessions to prevent unbounded growth.
+    const arr = Array.from(existing).slice(-200)
+    fs.writeFileSync(file, JSON.stringify({ analyzedSessions: arr }, null, 2))
+  } catch {
+    // Best-effort persistence — do not crash the plugin if FS is r/o.
+  }
+}
+
 export function createAutoPlanningGateHook(options: AutoPlanningGateOptions) {
   const config = options.config ?? {}
   if (config.enabled === false) {
@@ -139,14 +181,18 @@ export function createAutoPlanningGateHook(options: AutoPlanningGateOptions) {
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const disabledAgents = new Set(config.disabledAgents ?? [])
 
-  // Per-session state: we run the analyzer exactly once per session, on
-  // the first user message.
+  // In-memory session state (fast path) plus filesystem persistence
+  // (survives process restarts). Load the persisted set once on init.
   const sessions = new Map<string, SessionState>()
+  const persistedAnalyzed = loadPersistedSessions(options.ctx.directory)
 
   const getState = (sessionID: string): SessionState => {
     let s = sessions.get(sessionID)
     if (!s) {
-      s = { sessionID, analyzed: false, injected: false }
+      // Session pre-analyzed in a previous process? Mark analyzed so we
+      // skip re-classification + injection on this new process.
+      const wasAnalyzed = persistedAnalyzed.has(sessionID)
+      s = { sessionID, analyzed: wasAnalyzed, injected: wasAnalyzed }
       sessions.set(sessionID, s)
     }
     return s
@@ -160,6 +206,7 @@ export function createAutoPlanningGateHook(options: AutoPlanningGateOptions) {
     const state = getState(params.sessionID)
     if (state.analyzed) return
     state.analyzed = true
+    persistSession(options.ctx.directory, params.sessionID)
 
     if (disabledAgents.has(params.agent)) {
       log(`[${HOOK_NAME}] skipped: agent ${params.agent} is in disabledAgents`, {
@@ -257,6 +304,19 @@ export function createAutoPlanningGateHook(options: AutoPlanningGateOptions) {
     }
   }
 
+  const removePersistedSession = (sessionID: string): void => {
+    try {
+      const file = stateFilePath(options.ctx.directory)
+      if (!fs.existsSync(file)) return
+      const raw = fs.readFileSync(file, "utf8")
+      const parsed = JSON.parse(raw) as { analyzedSessions?: string[] }
+      const filtered = (parsed.analyzedSessions ?? []).filter((s) => s !== sessionID)
+      fs.writeFileSync(file, JSON.stringify({ analyzedSessions: filtered }, null, 2))
+    } catch {
+      // best-effort
+    }
+  }
+
   // Event handler — only for session cleanup (state clearing). The
   // main gate logic runs on `chat.message` which provides the
   // synchronous user prompt + parts directly.
@@ -265,7 +325,11 @@ export function createAutoPlanningGateHook(options: AutoPlanningGateOptions) {
     if (event.type === "session.deleted" || event.type === "session.compacted") {
       const info = (props?.info as { id?: string } | undefined) ?? undefined
       const sessionID = (props?.sessionID as string | undefined) ?? info?.id
-      if (sessionID) sessions.delete(sessionID)
+      if (sessionID) {
+        sessions.delete(sessionID)
+        persistedAnalyzed.delete(sessionID)
+        removePersistedSession(sessionID)
+      }
     }
   }
 
