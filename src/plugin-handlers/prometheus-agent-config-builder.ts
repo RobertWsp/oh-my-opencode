@@ -97,7 +97,14 @@ export async function buildPrometheusAgentConfig(params: {
   const base: Record<string, unknown> = {
     ...(resolvedModel ? { model: resolvedModel } : {}),
     ...(variantToUse ? { variant: variantToUse } : {}),
-    mode: "primary",
+    // "all" so Prometheus is both selectable via /model (as before) AND
+    // listed in the task tool description, allowing the auto-planning-gate
+    // hook to delegate via task(subagent_type="prometheus"). With just
+    // "primary" the task tool filter at packages/opencode/src/tool/task.ts:62
+    // (a.mode !== "primary") hides it from the tool description, so the
+    // orchestrator LLM refuses to delegate even though Agent.get() would
+    // have resolved it.
+    mode: "all",
     prompt: getPrometheusPrompt(resolvedModel, params.disabledTools),
     permission: PROMETHEUS_PERMISSION,
     description: `${(params.configAgentPlan?.description as string) ?? "Plan agent"} (Prometheus - OhMyOpenCode)`,

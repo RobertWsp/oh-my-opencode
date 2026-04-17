@@ -268,7 +268,7 @@ describe("buildPrometheusAgentConfig", () => {
       });
   });
 
-  test("returns Prometheus as a primary agent", async () => {
+  test("returns Prometheus with mode=all so it is both /model-selectable AND delegable via task()", async () => {
     // given
 
     // when
@@ -280,6 +280,6 @@ describe("buildPrometheusAgentConfig", () => {
     });
 
     // then
-    expect(result.mode).toBe("primary");
+    expect(result.mode).toBe("all");
   });
 });

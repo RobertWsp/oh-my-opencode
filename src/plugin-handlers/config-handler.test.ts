@@ -447,7 +447,7 @@ describe("Plan agent demote behavior", () => {
     expect(agents.plan.prompt).toBe("original plan prompt")
   })
 
-  test("prometheus should have mode 'primary' like the other core agents", async () => {
+  test("prometheus should have mode 'all' so task() delegation works", async () => {
     // given
     const pluginConfig = createPluginConfig({
       sisyphus_agent: {
@@ -474,7 +474,11 @@ describe("Plan agent demote behavior", () => {
     const agents = config.agent as Record<string, { mode?: string }>
     const prometheusKey = getAgentListDisplayName("prometheus")
     expect(agents[prometheusKey]).toBeDefined()
-    expect(agents[prometheusKey].mode).toBe("primary")
+    // "all" so Prometheus is both /model-selectable AND delegable via task()
+    // from the auto-planning-gate. Before this fix, mode="primary" hid
+    // Prometheus from the task tool description, so the orchestrator LLM
+    // refused to delegate planning tasks to it.
+    expect(agents[prometheusKey].mode).toBe("all")
   })
 })
 
