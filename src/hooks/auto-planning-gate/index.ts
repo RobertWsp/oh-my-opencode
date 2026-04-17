@@ -102,27 +102,36 @@ type SessionState = {
 
 /**
  * Build the Prometheus delegation prompt that we inject into the session
- * when the gate fires. This is intentionally direct: the primary agent
- * reads it as its next instruction and MUST begin by invoking Prometheus.
+ * when the gate fires. Design goals:
+ *   1. Force the primary agent to pass the EXACT user text as prompt=
+ *      (past bug: when this said "use user's request", LLMs paraphrased
+ *      or passed the directive itself, so Prometheus got a vague prompt
+ *      and idled in Interview Mode with 0 toolcalls).
+ *   2. Tell Prometheus directly (via a marker it recognises) that the
+ *      prompt it received IS the complete user brief — do not interview.
+ *   3. Keep the injected block small so it doesn't dilute the user text
+ *      in the prompt that Sisyphus eventually forwards.
  */
 function buildPrometheusInjection(userPrompt: string, reason: string): string {
   const trimmed = userPrompt.trim().slice(0, 4000)
   return [
     "<auto_planning_gate>",
-    `The task classifier determined this request merits formal planning: ${reason}.`,
+    `Task classifier: ${reason}. Planning is MANDATORY before implementation.`,
     "",
-    "MANDATORY next step:",
-    '1. Invoke Prometheus FIRST via task(subagent_type="prometheus", ...) with the user\'s request as its prompt.',
-    "2. When Prometheus returns a plan path (.sisyphus/plans/*.md), invoke Momus to review it.",
-    "3. If Momus rejects: loop back to Prometheus via session_id with Momus feedback until approved.",
-    "4. Only then proceed to implementation (delegate to Hephaestus or execute directly).",
+    "IMMEDIATELY invoke the task tool with these EXACT arguments:",
     "",
-    "Do NOT skip steps 1-3. Do NOT start implementation before a reviewed plan exists.",
+    '  subagent_type: "prometheus"',
+    "  description: <short title capturing the task>",
+    "  prompt: <COPY VERBATIM the text between the <user_brief> markers below — no paraphrase, no summary, no extra wrapping>",
     "",
-    "Original user request to pass into Prometheus:",
-    "---",
+    "<user_brief>",
+    "[AUTO_PLANNING_GATE_FORWARDED_REQUEST]",
     trimmed,
-    "---",
+    "</user_brief>",
+    "",
+    "After Prometheus returns a plan path (.sisyphus/plans/*.md), invoke Momus (task subagent_type=\"momus\") to review. If Momus rejects, loop back to Prometheus via session_id with Momus feedback. Only proceed to implementation once a reviewed plan exists.",
+    "",
+    "Do NOT paraphrase the user_brief. Do NOT start implementation before Momus approves.",
     "</auto_planning_gate>",
   ].join("\n")
 }

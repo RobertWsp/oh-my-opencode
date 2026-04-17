@@ -124,8 +124,13 @@ describe("auto-planning-gate", () => {
     expect(promptCalls.length).toBe(1)
     expect(promptCalls[0].sessionID).toBe("ses_1")
     expect(promptCalls[0].text).toContain("<auto_planning_gate>")
-    expect(promptCalls[0].text).toContain('task(subagent_type="prometheus"')
+    expect(promptCalls[0].text).toContain('subagent_type: "prometheus"')
     expect(promptCalls[0].text).toContain("task_type=architectural")
+    // user text must be wrapped in <user_brief> with the fast-path marker
+    // so Prometheus skips Interview Mode.
+    expect(promptCalls[0].text).toContain("<user_brief>")
+    expect(promptCalls[0].text).toContain("[AUTO_PLANNING_GATE_FORWARDED_REQUEST]")
+    expect(promptCalls[0].text).toContain("Redesign auth to use JWT")
   })
 
   test("injects for complex_refactor", async () => {
