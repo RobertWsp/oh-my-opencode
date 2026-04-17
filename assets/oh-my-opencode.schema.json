@@ -6261,7 +6261,7 @@
           "type": "string"
         },
         "timeoutMs": {
-          "default": 20000,
+          "default": 45000,
           "type": "integer",
           "minimum": 5000,
           "maximum": 9007199254740991

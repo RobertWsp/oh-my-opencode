@@ -24,7 +24,11 @@ import { log } from "../../shared/logger"
 
 const HOOK_NAME = "auto-planning-gate"
 const DEFAULT_ANALYZER_MODEL = "claude-sonnet-4-6"
-const DEFAULT_TIMEOUT_MS = 20_000
+// 45s: accommodates Meridian cold-start + multi-profile rotation under
+// rate limit. When analyzer times out the gate fails open (no
+// injection), so the only cost of a longer timeout is latency added to
+// the first turn of a session when analyzer is genuinely slow.
+const DEFAULT_TIMEOUT_MS = 45_000
 
 /** Task types that MUST go through Prometheus before implementation. */
 const PLAN_REQUIRED_TASK_TYPES = new Set(["planning", "architectural", "complex_refactor"])

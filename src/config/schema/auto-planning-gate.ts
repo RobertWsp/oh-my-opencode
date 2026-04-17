@@ -18,8 +18,13 @@ export const AutoPlanningGateConfigSchema = z.object({
    * the recommended balance.
    */
   analyzerModelID: z.string().default("claude-sonnet-4-6"),
-  /** Timeout in ms for the analyzer call. Default: 20000, min: 5000. */
-  timeoutMs: z.number().int().min(5000).default(20_000),
+  /**
+   * Timeout in ms for the analyzer call. Default: 45000, min: 5000.
+   * Higher timeouts accommodate Meridian multi-profile rotation during
+   * rate-limit windows; fail-open semantics mean a timeout simply skips
+   * the gate without injecting (no damage, just no planning boost).
+   */
+  timeoutMs: z.number().int().min(5000).default(45_000),
   /**
    * Agents for which the gate is skipped. Use when a specific agent
    * already handles planning itself (e.g. prometheus, momus).
