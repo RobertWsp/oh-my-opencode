@@ -2,11 +2,35 @@ import { describe, it, expect, beforeEach, mock } from "bun:test"
 import { mkdtempSync, readFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { createModelRouterHook } from "../hook"
-import * as runAnalyzer from "../analyzer/run-analyzer"
-import * as continuationClassifier from "../analyzer/continuation-classifier"
-import { defaultSpawnLogPath } from "../storage/spawn-intent-log"
 import type { TaskAnalysis } from "../types"
+
+mock.module("../analyzer/run-analyzer", () => ({
+  runAnalyzer: async () => ({
+    analysis: mkAnalysis(),
+    durationMs: 50,
+    modelUsed: "claude-sonnet-4-6",
+    via: "mocked",
+  }),
+}))
+mock.module("../analyzer/continuation-classifier", () => ({
+  classifyContinuation: async () => ({
+    decision: "reanalyze",
+    intent: "new_task",
+    confidence: 0.9,
+    reasoning: "first turn",
+    ruleHit: "first_turn",
+  }),
+  intentPolicy: () => "reanalyze",
+  isInterruption: () => false,
+}))
+mock.module("../analyzer/context-builder", () => ({
+  buildContextSnapshot: async () => null,
+  estimateHistoryTokens: () => 0,
+  fetchSessionMessages: async () => [],
+}))
+
+const { createModelRouterHook } = await import("../hook")
+const { defaultSpawnLogPath } = await import("../storage/spawn-intent-log")
 
 /**
  * Integration test: drive the chat.message handler end-to-end with a mocked
@@ -49,34 +73,12 @@ function mkAnalysis(overrides: Partial<TaskAnalysis> = {}): TaskAnalysis {
 describe("hook spawn integration", () => {
   let tmpDir: string
   let routingLogPath: string
-  let analyzerSpy: ReturnType<typeof mock>
-  let classifierSpy: ReturnType<typeof mock>
 
   beforeEach(() => {
     tmpDir = mkdtempSync(path.join(tmpdir(), "model-router-spawn-"))
     routingLogPath = path.join(tmpDir, "routing.jsonl")
-    // The spawn intent log goes to the default path (HOME-based). For
-    // assertion isolation we redirect it via XDG-style HOME override.
+    // Spawn intent log uses HOME-based default path; isolate via override
     process.env.HOME = tmpDir
-
-    // Mock analyzer to return a deterministic commit_push analysis
-    analyzerSpy = mock(async () => ({
-      analysis: mkAnalysis(),
-      durationMs: 50,
-      modelUsed: "claude-sonnet-4-6",
-      via: "mocked" as const,
-    }))
-    ;(runAnalyzer as any).runAnalyzer = analyzerSpy
-
-    // Mock continuation classifier to always reanalyze
-    classifierSpy = mock(async () => ({
-      decision: "reanalyze" as const,
-      intent: "new_task" as const,
-      confidence: 0.9,
-      reasoning: "first turn",
-      ruleHit: "first_turn",
-    }))
-    ;(continuationClassifier as any).classifyContinuation = classifierSpy
   })
 
   function buildOutput() {

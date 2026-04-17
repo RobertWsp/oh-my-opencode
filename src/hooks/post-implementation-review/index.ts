@@ -64,6 +64,12 @@ interface ToolInput {
   sessionID: string
   callID: string
   tool: string
+  /**
+   * Optional args — some OpenCode builds pass original tool args here.
+   * In the main runtime (`packages/opencode/src/session/prompt.ts`) the
+   * tool.execute.after hook receives only `{ tool, sessionID, callID }`
+   * and the args surface through `output.metadata`. Support both shapes.
+   */
   args?: Record<string, unknown>
 }
 
@@ -72,16 +78,57 @@ interface ToolOutput {
   metadata?: Record<string, unknown>
 }
 
-function extractSubagentType(args: Record<string, unknown> | undefined): string | null {
-  if (!args) return null
-  const value = args["subagent_type"]
-  return typeof value === "string" ? value : null
+/**
+ * Normalize a subagent type string (e.g. strip zero-width separators
+ * used by the router for tier-tracking, "Hephaestus (Deep Agent)" ->
+ * "hephaestus").
+ */
+function normalizeSubagentName(raw: string): string {
+  return raw
+    .replace(/[\u200B-\u200F\u2060-\u206F\uFEFF]/g, "")
+    .trim()
+    .toLowerCase()
+    .split(/\s|[-_/(]/)[0]
 }
 
-function extractPrompt(args: Record<string, unknown> | undefined): string {
-  if (!args) return ""
-  const value = args["prompt"]
-  return typeof value === "string" ? value : ""
+function extractSubagentType(
+  args: Record<string, unknown> | undefined,
+  metadata: Record<string, unknown> | undefined,
+): string | null {
+  // Prefer explicit subagent_type in args
+  const argsValue = args?.["subagent_type"]
+  if (typeof argsValue === "string" && argsValue.length > 0) {
+    return normalizeSubagentName(argsValue)
+  }
+  // Fall back to metadata.agent (OpenCode puts agent display name here)
+  const metaAgent = metadata?.["agent"]
+  if (typeof metaAgent === "string" && metaAgent.length > 0) {
+    return normalizeSubagentName(metaAgent)
+  }
+  // Some shapes nest under metadata.task
+  const taskMeta = metadata?.["task"]
+  if (taskMeta && typeof taskMeta === "object") {
+    const nested = (taskMeta as Record<string, unknown>)["subagent_type"]
+    if (typeof nested === "string" && nested.length > 0) {
+      return normalizeSubagentName(nested)
+    }
+    const nestedAgent = (taskMeta as Record<string, unknown>)["agent"]
+    if (typeof nestedAgent === "string" && nestedAgent.length > 0) {
+      return normalizeSubagentName(nestedAgent)
+    }
+  }
+  return null
+}
+
+function extractPrompt(
+  args: Record<string, unknown> | undefined,
+  metadata: Record<string, unknown> | undefined,
+): string {
+  const argsPrompt = args?.["prompt"]
+  if (typeof argsPrompt === "string") return argsPrompt
+  const metaPrompt = metadata?.["prompt"]
+  if (typeof metaPrompt === "string") return metaPrompt
+  return ""
 }
 
 function extractSessionIDFromOutput(output: unknown): string | null {
@@ -175,12 +222,16 @@ export function createPostImplementationReviewHook(options: PostImplementationRe
     }
   }
 
+  const normalizedReviewable = new Set(
+    Array.from(reviewableAgents).map((a) => normalizeSubagentName(a)),
+  )
+
   const toolExecuteAfter = async (input: ToolInput, output: ToolOutput): Promise<void> => {
     if (input.tool !== "task") return
 
-    const subagent = extractSubagentType(input.args)
+    const subagent = extractSubagentType(input.args, output.metadata)
     if (!subagent) return
-    if (!reviewableAgents.has(subagent)) return
+    if (!normalizedReviewable.has(subagent)) return
 
     const length = outputLength(output.output)
     if (length < minOutputChars) {
@@ -202,8 +253,16 @@ export function createPostImplementationReviewHook(options: PostImplementationRe
       return
     }
 
-    const implementerSessionID = extractSessionIDFromOutput(output.output)
-    const originalPrompt = extractPrompt(input.args)
+    // Prefer session_id from metadata; fall back to regex on output body.
+    const metadataSessionID =
+      (typeof output.metadata?.["sessionID"] === "string" && output.metadata["sessionID"]) ||
+      (typeof output.metadata?.["sessionId"] === "string" && output.metadata["sessionId"]) ||
+      (typeof output.metadata?.["session_id"] === "string" && output.metadata["session_id"]) ||
+      null
+    const implementerSessionID =
+      (typeof metadataSessionID === "string" ? metadataSessionID : null) ??
+      extractSessionIDFromOutput(output.output)
+    const originalPrompt = extractPrompt(input.args, output.metadata)
     const injection = buildMomusInjection({
       implementerAgent: subagent,
       implementerSessionID,
