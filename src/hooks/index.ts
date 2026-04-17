@@ -107,3 +107,8 @@ export {
   type PostImplementationReviewContext,
   type PostImplementationReviewOptions,
 } from "./post-implementation-review";
+export {
+  createSubagentQuestionNotifierHook,
+  type SubagentQuestionNotifierContext,
+  type SubagentQuestionNotifierOptions,
+} from "./subagent-question-notifier";

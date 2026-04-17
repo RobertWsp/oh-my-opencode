@@ -32,6 +32,9 @@ import { createModelRouterHook } from "../../hooks/model-router"
 import { createFeedbackLoopHook } from "../../hooks/feedback-loop"
 import { createAutoPlanningGateHook } from "../../hooks/auto-planning-gate"
 import { createPostImplementationReviewHook } from "../../hooks/post-implementation-review"
+import { createSubagentQuestionNotifierHook } from "../../hooks/subagent-question-notifier"
+import { createLspFeedbackEnforcerHook } from "../../hooks/lsp-feedback-enforcer"
+import { createRepoMapHook } from "../../hooks/repo-map"
 import {
   detectExternalNotificationPlugin,
   getNotificationConflictWarning,
@@ -71,6 +74,9 @@ export type SessionHooks = {
   feedbackLoop: ReturnType<typeof createFeedbackLoopHook> | null
   autoPlanningGate: ReturnType<typeof createAutoPlanningGateHook> | null
   postImplementationReview: ReturnType<typeof createPostImplementationReviewHook> | null
+  subagentQuestionNotifier: ReturnType<typeof createSubagentQuestionNotifierHook> | null
+  lspFeedbackEnforcer: ReturnType<typeof createLspFeedbackEnforcerHook> | null
+  repoMap: ReturnType<typeof createRepoMapHook> | null
 }
 
 export function createSessionHooks(args: {
@@ -320,6 +326,37 @@ export function createSessionHooks(args: {
         }))
     : null
 
+  // Subagent question notifier — when a subagent (e.g. Prometheus in
+  // interview mode) fires the `question` tool, the QuestionTool already
+  // renders the prompt inside the subagent's own session view. This hook
+  // additionally raises a TUI toast telling the user to navigate into
+  // that subagent view (ctrl+x down) so questions don't sit silently.
+  const subagentQuestionNotifier = isHookEnabled("subagent-question-notifier")
+    ? safeHook("subagent-question-notifier", () =>
+        createSubagentQuestionNotifierHook({ ctx }))
+    : null
+
+  // LSP feedback enforcer — reads the `diagnosticsSummary` that the fork's
+  // Edit/Write/MultiEdit tools already expose (edit.ts:146-156, patched to
+  // include structured summary in metadata), and escalates the reminder
+  // severity when the same file keeps failing LSP checks across turns.
+  const lspFeedbackEnforcer = isHookEnabled("lsp-feedback-enforcer")
+    ? safeHook("lsp-feedback-enforcer", () => createLspFeedbackEnforcerHook(ctx))
+    : null
+
+  // Repo map — on the first Read/Edit/Write/Grep/Glob/List in a session,
+  // walks the workspace, extracts symbols + imports via regex, runs
+  // PageRank over the import graph, and registers a compact topological
+  // view (~1k tokens) with the context-injector. The injector then
+  // prepends this to the next chat turn so the model sees the map as
+  // part of its context.
+  //
+  // Complements the lsp-feedback-enforcer: repo-map is PREVENTIVE
+  // (context before edit), enforcer is REACTIVE (feedback after edit
+  // errors). Together they substantially reduce hallucination.
+  const repoMap = isHookEnabled("repo-map")
+    ? safeHook("repo-map", () => createRepoMapHook(ctx))
+    : null
 
   return {
     contextWindowMonitor,
@@ -350,5 +387,8 @@ export function createSessionHooks(args: {
     feedbackLoop,
     autoPlanningGate,
     postImplementationReview,
+    subagentQuestionNotifier,
+    lspFeedbackEnforcer,
+    repoMap,
   }
 }

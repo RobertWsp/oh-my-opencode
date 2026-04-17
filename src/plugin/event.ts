@@ -307,6 +307,14 @@ export function createEventHandler(args: {
       pirEvent as unknown as (input: { event: unknown }) => unknown,
       input,
     );
+    // Subagent question notifier — raises a TUI toast when a question
+    // tool is invoked inside a subagent session (has parentID), telling
+    // the user to navigate to the subagent view to answer.
+    await runEventHookSafely(
+      "subagentQuestionNotifier",
+      hooks.subagentQuestionNotifier?.event,
+      input,
+    );
     // Feedback loop captures outcome signals (errors, idle, tool calls)
     // and enriches the routing log with outcome records. Runs LAST so
     // all other hooks have finished mutating state first.

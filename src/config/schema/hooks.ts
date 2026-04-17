@@ -62,6 +62,9 @@ export const HookNameSchema = z.enum([
   "feedback-loop",
   "auto-planning-gate",
   "post-implementation-review",
+  "subagent-question-notifier",
+  "lsp-feedback-enforcer",
+  "repo-map",
 ]);
 
 export type HookName = z.infer<typeof HookNameSchema>;
