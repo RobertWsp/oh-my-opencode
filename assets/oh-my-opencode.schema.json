@@ -6249,6 +6249,76 @@
       ],
       "additionalProperties": false
     },
+    "auto_planning_gate": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "analyzerModelID": {
+          "default": "claude-sonnet-4-6",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "default": 20000,
+          "type": "integer",
+          "minimum": 5000,
+          "maximum": 9007199254740991
+        },
+        "disabledAgents": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "enabled",
+        "analyzerModelID",
+        "timeoutMs",
+        "disabledAgents"
+      ],
+      "additionalProperties": false
+    },
+    "post_implementation_review": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "reviewableAgents": {
+          "default": [
+            "hephaestus"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "minOutputChars": {
+          "default": 400,
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 9007199254740991
+        },
+        "cooldownMs": {
+          "default": 60000,
+          "type": "integer",
+          "minimum": 5000,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "enabled",
+        "reviewableAgents",
+        "minOutputChars",
+        "cooldownMs"
+      ],
+      "additionalProperties": false
+    },
     "_migrations": {
       "type": "array",
       "items": {

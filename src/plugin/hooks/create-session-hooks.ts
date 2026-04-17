@@ -302,7 +302,10 @@ export function createSessionHooks(args: {
   // analyzer infrastructure; no extra credentials required.
   const autoPlanningGate = isHookEnabled("auto-planning-gate")
     ? safeHook("auto-planning-gate", () =>
-        createAutoPlanningGateHook({ ctx }))
+        createAutoPlanningGateHook({
+          ctx,
+          config: pluginConfig.auto_planning_gate,
+        }))
     : null
 
   // Post-Implementation Review — when `task(subagent_type="hephaestus")`
@@ -311,7 +314,10 @@ export function createSessionHooks(args: {
   // → fix loop before marking the work done.
   const postImplementationReview = isHookEnabled("post-implementation-review")
     ? safeHook("post-implementation-review", () =>
-        createPostImplementationReviewHook({ ctx }))
+        createPostImplementationReviewHook({
+          ctx,
+          config: pluginConfig.post_implementation_review,
+        }))
     : null
 
 

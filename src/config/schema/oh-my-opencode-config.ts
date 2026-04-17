@@ -2,8 +2,10 @@ import { z } from "zod"
 import { AnyMcpNameSchema } from "../../mcp/types"
 import { BuiltinSkillNameSchema } from "./agent-names"
 import { AgentOverridesSchema } from "./agent-overrides"
+import { AutoPlanningGateConfigSchema } from "./auto-planning-gate"
 import { BabysittingConfigSchema } from "./babysitting"
 import { BackgroundTaskConfigSchema } from "./background-task"
+import { PostImplementationReviewConfigSchema } from "./post-implementation-review"
 import { BrowserAutomationConfigSchema } from "./browser-automation"
 import { CategoriesConfigSchema } from "./categories"
 import { ClaudeCodeConfigSchema } from "./claude-code"
@@ -78,6 +80,20 @@ export const OhMyOpenCodeConfigSchema = z.object({
   tmux: TmuxConfigSchema.optional(),
   sisyphus: SisyphusConfigSchema.optional(),
   start_work: StartWorkConfigSchema.optional(),
+  /**
+   * Auto-Planning Gate: on the first user turn, runs the analyzer and
+   * when the task is architectural/complex_refactor/risky injects a
+   * Prometheus directive before the primary agent starts. Off by default
+   * via `disabled_hooks: ["auto-planning-gate"]`; this block tunes its
+   * parameters when it IS enabled.
+   */
+  auto_planning_gate: AutoPlanningGateConfigSchema.optional(),
+  /**
+   * Post-Implementation Review: when a task with subagent_type matching
+   * `reviewableAgents` completes with substantial output, injects a
+   * Momus review directive into the parent session.
+   */
+  post_implementation_review: PostImplementationReviewConfigSchema.optional(),
   /** Migration history to prevent re-applying migrations (e.g., model version upgrades) */
   _migrations: z.array(z.string()).optional(),
 })

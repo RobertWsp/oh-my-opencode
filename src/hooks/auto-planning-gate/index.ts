@@ -124,7 +124,11 @@ function buildPrometheusInjection(userPrompt: string, reason: string): string {
 export function createAutoPlanningGateHook(options: AutoPlanningGateOptions) {
   const config = options.config ?? {}
   if (config.enabled === false) {
-    return { event: async () => {} }
+    const noop = async () => {}
+    return {
+      "chat.message": noop,
+      event: noop,
+    }
   }
 
   const analyzerModelID = config.analyzerModelID ?? DEFAULT_ANALYZER_MODEL

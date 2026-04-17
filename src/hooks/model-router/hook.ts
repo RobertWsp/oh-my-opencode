@@ -37,6 +37,7 @@ import { clearThreadState, completePlanPhase, getThreadState } from "./storage/t
 import type { RoutingDecision, Tier } from "./types"
 import { decideExecutionPlan } from "./router/subagent-decision"
 import { buildSubagentPrompt } from "./router/subagent-prompt-builder"
+import { buildSyntheticSpawnInstruction } from "./router/synthetic-spawn-instruction"
 import {
   appendSpawnIntent,
   defaultSpawnLogPath,
@@ -83,6 +84,26 @@ function formatRouterNotification(decision: RoutingDecision, executionMode?: "in
   const conf = decision.confidence > 0 ? ` · ${decision.confidence.toFixed(2)}` : ""
   const mode = executionMode === "spawn" ? " ⇢ subagent" : ""
   return `${symbol} Router → ${decision.tier} · ${reasonClean}${conf}${mode}`
+}
+
+/**
+ * Append a synthetic text part to the user message that instructs the
+ * main agent to delegate this turn to the task tool. Mirrors the fork's
+ * @agent invocation pattern (prompt.ts:1300) — the fork's resolvePromptParts
+ * appends a similar synthetic part for explicit @agent calls.
+ *
+ * The part has `synthetic: true` so it's marked as machine-injected and
+ * doesn't appear in the user-facing transcript verbatim.
+ */
+function appendSyntheticInstruction(
+  output: { message: Record<string, unknown>; parts: Array<{ type: string; text?: string; synthetic?: boolean }> },
+  instruction: string,
+): void {
+  output.parts.push({
+    type: "text",
+    text: instruction,
+    synthetic: true,
+  })
 }
 
 function pushRouterNotification(
@@ -448,8 +469,9 @@ export function createModelRouterHook(
       const isolation = config.subagentIsolation
       const isolationActive = isolation && isolation.mode !== "disabled" && executionPlan.mode === "spawn"
 
-      if (isolationActive && decision.analysis) {
-        const prompt = buildSubagentPrompt({
+      let spawnDispatched = false
+      if (isolationActive && decision.analysis && executionPlan.mode === "spawn") {
+        const builderInput = {
           originalUserMessage: promptText,
           plan: executionPlan,
           analysis: decision.analysis,
@@ -459,7 +481,8 @@ export function createModelRouterHook(
             providerID: currentModel?.providerID ?? "",
             cwd: ctx?.directory ?? process.cwd(),
           },
-        })
+        }
+        const subagentPrompt = buildSubagentPrompt(builderInput)
         const record: SpawnIntentRecord = {
           version: 1,
           timestamp: Date.now(),
@@ -474,19 +497,28 @@ export function createModelRouterHook(
           decisionTier: decision.tier,
           decisionReasons: decision.reasons,
           analysisSummary: summarizeAnalysis(decision),
-          subagentPromptPreview: prompt.slice(0, 500),
-          subagentPromptSha256: await sha256(prompt),
+          subagentPromptPreview: subagentPrompt.slice(0, 500),
+          subagentPromptSha256: await sha256(subagentPrompt),
           mode: isolation.mode as "shadow" | "spawn",
         }
         await appendSpawnIntent(defaultSpawnLogPath(), record)
 
-        // TODO (spawn mode): call the spawner to actually launch the
-        // subagent. Kept behind the flag until the escalation loop + sync
-        // wait integration is wired to the Task tool or delegate-task sync
-        // poller. See router/subagent-decision.ts for the decision output.
+        if (isolation.mode === "spawn") {
+          // Dispatch path — append a synthetic text part instructing the
+          // main agent to call the task tool with the generated subagent
+          // prompt + chosen tier. Mirrors the @agent invocation pattern
+          // already used by the fork (see fork prompt.ts:1300).
+          const instruction = buildSyntheticSpawnInstruction(builderInput)
+          appendSyntheticInstruction(output, instruction)
+          spawnDispatched = true
+        }
       }
 
-      if (needsSwap) {
+      // When we dispatched a spawn, do NOT swap the main session's model.
+      // The main keeps its current model, just adds the synthetic
+      // delegation instruction. This is the entire point of isolation:
+      // preserve the main's prompt cache.
+      if (needsSwap && !spawnDispatched) {
         output.message["model"] = {
           providerID: decision.providerID,
           modelID: decision.modelID,
@@ -496,7 +528,7 @@ export function createModelRouterHook(
       // Push a synthetic notification to the fork's router-notifications
       // queue so the processor can render it as an inline history
       // message (same pattern as account switch notifications).
-      pushRouterNotification(input.sessionID, decision, executionPlan.mode)
+      pushRouterNotification(input.sessionID, decision, spawnDispatched ? "spawn" : "inline")
 
       if (config.logDecisions) {
         await appendDecision(logPath, decision)

@@ -176,14 +176,41 @@ export function createFeedbackLoopHook(opts: Partial<FeedbackLoopOptions> = {}):
       return
     }
 
-    // Tool executed → count
+    // Tool executed → count + detect subagent task spawn / escalation
     if (ev.type === "tool.execute.after") {
-      const info = props.info as { sessionID?: string } | undefined
+      const info = props.info as
+        | { sessionID?: string; tool?: string; output?: string; metadata?: { sessionId?: string; model?: { modelID?: string } } }
+        | undefined
       const sessionID = info?.sessionID ?? (props.sessionID as string | undefined)
       if (!sessionID) return
       const state = sessions.get(sessionID)
       if (!state) return
       state.signals.toolsExecutedCount += 1
+
+      // Subagent isolation telemetry. The router-driven spawn instructs
+      // the main agent to call the `task` tool — we track those calls
+      // and parse their outputs for <escalation> blocks.
+      if (info?.tool === "task" && typeof info?.output === "string") {
+        state.signals.subagentUsed = true
+        if (info.metadata?.sessionId) state.signals.subagentSessionID = info.metadata.sessionId
+        try {
+          const { detectEscalation } = await import("../model-router/router/escalation-loop")
+          const det = detectEscalation({
+            subagentOutput: info.output,
+            currentTier: state.lastDecision?.tier ?? "sonnet",
+            previousEscalations: state.signals.escalationRequested ? 1 : 0,
+          })
+          if (det.detected) {
+            state.signals.escalationRequested = true
+            state.signals.escalationFromTier = det.fromTier
+            state.signals.escalationToTier = det.toTier
+            state.signals.escalationReason = det.reason
+          }
+        } catch (e) {
+          // Non-fatal — telemetry parsing must never break the session
+          log("[feedback-loop] escalation detection failed", { error: String(e) })
+        }
+      }
       return
     }
 
