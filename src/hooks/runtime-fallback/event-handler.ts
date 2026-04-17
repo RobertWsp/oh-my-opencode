@@ -10,7 +10,11 @@ import { isAbortError } from "../../shared/is-abort-error"
 import { resolveFallbackBootstrapModel } from "./fallback-bootstrap-model"
 import { dispatchFallbackRetry } from "./fallback-retry-dispatcher"
 import { createSessionStatusHandler } from "./session-status-handler"
-import { isMeridianAuthError, tryReassignMeridianProfile } from "./meridian-auth-recovery"
+import {
+  isMeridianAuthError,
+  isMeridianQuotaError,
+  tryReassignMeridianProfileWithReason,
+} from "./meridian-auth-recovery"
 
 export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
   const { config, pluginConfig, sessionStates, sessionLastAccess, sessionRetryInFlight, sessionAwaitingFallbackResult, sessionFallbackTimeouts, sessionStatusRetryKeys } = deps
@@ -161,18 +165,24 @@ export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
       return
     }
 
-    // Meridian profile auth recovery — cheaper than model fallback: if
-    // the failure is a profile-specific auth-expired OAuth token, force a
-    // profile switch via the multi-profile plugin and retry with the same
-    // model. Falls through to model fallback if reassign fails or no
-    // healthy profile remains.
+    // Meridian profile recovery — cheaper than model fallback: if the
+    // failure is profile-specific (auth expired, weekly/hourly quota
+    // exhausted, 429 rate-limit), force a profile switch via the
+    // multi-profile plugin and retry with the SAME model. Other profiles
+    // may still have budget. Falls through to model fallback if reassign
+    // fails or no healthy profile remains.
     let state = sessionStates.get(sessionID)
-    if (isMeridianAuthError(error)) {
-      const newProfile = tryReassignMeridianProfile(sessionID)
+    const meridianReason = isMeridianAuthError(error)
+      ? "auth_expired"
+      : isMeridianQuotaError(error)
+        ? "weekly_limit"
+        : null
+    if (meridianReason) {
+      const newProfile = tryReassignMeridianProfileWithReason(sessionID, meridianReason)
       if (newProfile) {
         const retryModel = state?.originalModel ?? resolveFallbackBootstrapModel({
           sessionID,
-          source: "meridian-auth-recovery",
+          source: `meridian-${meridianReason}-recovery`,
           eventModel: props?.model as string | undefined,
           resolvedAgent,
           pluginConfig,
@@ -180,6 +190,7 @@ export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
         if (retryModel) {
           log(`[${HOOK_NAME}] Retrying after Meridian profile reassign`, {
             sessionID,
+            reason: meridianReason,
             newProfile,
             retryModel,
           })
@@ -192,7 +203,7 @@ export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
             sessionID,
             retryModel,
             resolvedAgent,
-            "meridian-auth-recovery",
+            `meridian-${meridianReason}-recovery`,
           )
           return
         }
@@ -200,6 +211,7 @@ export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
       // No healthy profile — fall through to model fallback as last resort.
       log(`[${HOOK_NAME}] Meridian reassign unavailable; falling through to model fallback`, {
         sessionID,
+        reason: meridianReason,
       })
     }
 

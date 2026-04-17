@@ -1,5 +1,10 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test"
-import { isMeridianAuthError, tryReassignMeridianProfile } from "./meridian-auth-recovery"
+import {
+  isMeridianAuthError,
+  isMeridianQuotaError,
+  tryReassignMeridianProfile,
+  tryReassignMeridianProfileWithReason,
+} from "./meridian-auth-recovery"
 
 describe("meridian-auth-recovery", () => {
   const registry = globalThis as unknown as {
@@ -90,6 +95,67 @@ describe("meridian-auth-recovery", () => {
         throw new Error("boom")
       }
       expect(tryReassignMeridianProfile("ses_1")).toBe(null)
+    })
+
+    test("tryReassignMeridianProfileWithReason forwards reason=weekly_limit", () => {
+      const calls: Array<{ sid: string; reason: string | undefined }> = []
+      registry.__meridianReassign = (sid, reason) => {
+        calls.push({ sid, reason })
+        return "alt3"
+      }
+      const result = tryReassignMeridianProfileWithReason("ses_w", "weekly_limit")
+      expect(result).toBe("alt3")
+      expect(calls).toEqual([{ sid: "ses_w", reason: "weekly_limit" }])
+    })
+  })
+
+  describe("isMeridianQuotaError", () => {
+    test("detects 'usage limit has been reached' (Claude Max weekly)", () => {
+      expect(
+        isMeridianQuotaError({
+          message: "The usage limit has been reached [retrying in 27s attempt #6]",
+        }),
+      ).toBe(true)
+    })
+
+    test("detects 'reached your usage limit'", () => {
+      expect(
+        isMeridianQuotaError({
+          message: "You've reached your usage limit for this month. Please upgrade.",
+        }),
+      ).toBe(true)
+    })
+
+    test("detects 'weekly usage limit'", () => {
+      expect(isMeridianQuotaError({ message: "Weekly usage limit exceeded." })).toBe(true)
+    })
+
+    test("detects 'exhausted your capacity'", () => {
+      expect(isMeridianQuotaError({ message: "You have exhausted your capacity." })).toBe(true)
+    })
+
+    test("detects '429' status in message", () => {
+      expect(isMeridianQuotaError({ message: "HTTP 429 too many requests" })).toBe(true)
+    })
+
+    test("detects 'all credentials for model are cooling down'", () => {
+      expect(
+        isMeridianQuotaError({
+          message: "All credentials for model claude-opus-4-6 are cooling down",
+        }),
+      ).toBe(true)
+    })
+
+    test("does NOT misclassify auth error as quota", () => {
+      expect(
+        isMeridianQuotaError({
+          message: "Claude authentication expired or invalid. Run 'claude login'...",
+        }),
+      ).toBe(false)
+    })
+
+    test("does NOT misclassify generic 500 as quota", () => {
+      expect(isMeridianQuotaError({ message: "internal server error 500" })).toBe(false)
     })
   })
 })
