@@ -10,6 +10,7 @@ import { isAbortError } from "../../shared/is-abort-error"
 import { resolveFallbackBootstrapModel } from "./fallback-bootstrap-model"
 import { dispatchFallbackRetry } from "./fallback-retry-dispatcher"
 import { createSessionStatusHandler } from "./session-status-handler"
+import { isMeridianAuthError, tryReassignMeridianProfile } from "./meridian-auth-recovery"
 
 export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
   const { config, pluginConfig, sessionStates, sessionLastAccess, sessionRetryInFlight, sessionAwaitingFallbackResult, sessionFallbackTimeouts, sessionStatusRetryKeys } = deps
@@ -160,7 +161,48 @@ export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
       return
     }
 
+    // Meridian profile auth recovery — cheaper than model fallback: if
+    // the failure is a profile-specific auth-expired OAuth token, force a
+    // profile switch via the multi-profile plugin and retry with the same
+    // model. Falls through to model fallback if reassign fails or no
+    // healthy profile remains.
     let state = sessionStates.get(sessionID)
+    if (isMeridianAuthError(error)) {
+      const newProfile = tryReassignMeridianProfile(sessionID)
+      if (newProfile) {
+        const retryModel = state?.originalModel ?? resolveFallbackBootstrapModel({
+          sessionID,
+          source: "meridian-auth-recovery",
+          eventModel: props?.model as string | undefined,
+          resolvedAgent,
+          pluginConfig,
+        })
+        if (retryModel) {
+          log(`[${HOOK_NAME}] Retrying after Meridian profile reassign`, {
+            sessionID,
+            newProfile,
+            retryModel,
+          })
+          if (!state) {
+            state = createFallbackState(retryModel)
+            sessionStates.set(sessionID, state)
+          }
+          sessionLastAccess.set(sessionID, Date.now())
+          await helpers.autoRetryWithFallback(
+            sessionID,
+            retryModel,
+            resolvedAgent,
+            "meridian-auth-recovery",
+          )
+          return
+        }
+      }
+      // No healthy profile — fall through to model fallback as last resort.
+      log(`[${HOOK_NAME}] Meridian reassign unavailable; falling through to model fallback`, {
+        sessionID,
+      })
+    }
+
     const fallbackModels = getFallbackModelsForSession(sessionID, resolvedAgent, pluginConfig)
 
     if (fallbackModels.length === 0) {

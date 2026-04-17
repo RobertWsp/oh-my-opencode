@@ -39,6 +39,14 @@ export const RETRYABLE_ERROR_PATTERNS = [
   /(?:^|\s)429(?:\s|$)/,
   /(?:^|\s)503(?:\s|$)/,
   /(?:^|\s)529(?:\s|$)/,
+  /authentication\s+expired/i,
+  /authentication\s+invalid/i,
+  /invalid_grant/i,
+  /claude\s+login/i,
+  /restart\s+the\s+proxy/i,
+  /(?:^|[^0-9])401(?:[^0-9]|$)/,
+  /token.{0,20}(?:expired|invalid)/i,
+  /unauthorized/i,
 ]
 
 /**
