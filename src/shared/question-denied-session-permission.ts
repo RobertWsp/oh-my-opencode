@@ -1,3 +1,5 @@
+import { getAgentConfigKey } from "./agent-display-names"
+
 export type SessionPermissionRule = {
   permission: string
   action: "allow" | "deny"
@@ -10,16 +12,13 @@ export const QUESTION_DENIED_SESSION_PERMISSION: SessionPermissionRule[] = [
 
 const PLAN_FAMILY_AGENTS = new Set(["plan", "prometheus"])
 
-function normalizeAgent(agent: string): string {
-  return agent.trim().toLowerCase().replace(/^[\s\u200b-\u200f\ufeff]+/, "")
-}
-
 const QUESTION_ALLOWED_SESSION_PERMISSION: SessionPermissionRule[] = [
   { permission: "question", action: "allow", pattern: "*" },
 ]
 
 export function getSubagentSessionPermissions(agent: string): SessionPermissionRule[] {
-  return PLAN_FAMILY_AGENTS.has(normalizeAgent(agent))
+  const configKey = getAgentConfigKey(agent).toLowerCase().trim()
+  return PLAN_FAMILY_AGENTS.has(configKey)
     ? QUESTION_ALLOWED_SESSION_PERMISSION
     : QUESTION_DENIED_SESSION_PERMISSION
 }

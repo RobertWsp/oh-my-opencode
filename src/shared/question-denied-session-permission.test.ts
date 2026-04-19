@@ -29,4 +29,11 @@ describe("getSubagentSessionPermissions", () => {
     expect(getSubagentSessionPermissions("PROMETHEUS")).toEqual(expected)
     expect(getSubagentSessionPermissions(" prometheus ")).toEqual(expected)
   })
+
+  test("resolves runtime display name via getAgentConfigKey (regression)", () => {
+    const expected = [{ permission: "question", action: "allow", pattern: "*" }]
+    expect(getSubagentSessionPermissions("Prometheus - Plan Builder")).toEqual(expected)
+    expect(getSubagentSessionPermissions("\u200B\u200B\u200BPrometheus - Plan Builder")).toEqual(expected)
+    expect(getSubagentSessionPermissions("Atlas - Plan Executor")).toEqual(QUESTION_DENIED_SESSION_PERMISSION)
+  })
 })
