@@ -126,7 +126,36 @@ describe("subagent-question-notifier", () => {
     await hook.event({
       event: {
         type: "question.replied",
-        properties: { id: "qst_resume", requestID: "qst_resume" },
+        properties: { sessionID: "ses_child", requestID: "qst_resume", answers: [] },
+      },
+    })
+
+    await hook.event({ event: asked })
+    expect(toastCalls.length).toBe(2)
+  })
+
+  test("question.rejected also clears dedupe state (fork schema: sessionID+requestID only)", async () => {
+    const ctx = makeCtx(toastCalls, {
+      ses_child: { parentID: "ses_parent" },
+    })
+    const hook = createSubagentQuestionNotifierHook({ ctx })
+
+    const asked = {
+      type: "question.asked" as const,
+      properties: {
+        id: "qst_reject",
+        sessionID: "ses_child",
+        questions: [{ question: "?", header: "H" }],
+      },
+    }
+
+    await hook.event({ event: asked })
+    expect(toastCalls.length).toBe(1)
+
+    await hook.event({
+      event: {
+        type: "question.rejected",
+        properties: { sessionID: "ses_child", requestID: "qst_reject" },
       },
     })
 

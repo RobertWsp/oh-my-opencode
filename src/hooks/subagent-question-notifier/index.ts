@@ -124,20 +124,16 @@ export function createSubagentQuestionNotifierHook(
     await showQuestionToast(sessionID, questions)
   }
 
-  const clearRequest = (requestID: string | undefined): void => {
-    if (!requestID) return
-    notifiedRequests.delete(requestID)
-  }
-
   const cleanupHandler = async ({
     event,
   }: {
     event: { type: string; properties?: unknown }
   }): Promise<void> => {
     if (event.type !== "question.replied" && event.type !== "question.rejected") return
-    const props = event.properties as { id?: string; requestID?: string } | undefined
-    clearRequest(props?.id)
-    clearRequest(props?.requestID)
+    const props = event.properties as { requestID?: string } | undefined
+    const requestID = props?.requestID
+    if (!requestID) return
+    notifiedRequests.delete(requestID)
   }
 
   return {
