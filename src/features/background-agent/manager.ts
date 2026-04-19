@@ -577,8 +577,8 @@ export class BackgroundManager {
         const tools = {
           task: false,
           call_omo_agent: true,
-          question: isPlanFamily(input.agent),
           ...getAgentToolRestrictions(input.agent),
+          question: isPlanFamily(input.agent),
         }
         setSessionTools(sessionID, tools)
         return tools
@@ -886,8 +886,8 @@ export class BackgroundManager {
           const tools = {
             task: false,
             call_omo_agent: true,
-            question: isPlanFamily(existingTask.agent),
             ...getAgentToolRestrictions(existingTask.agent),
+            question: isPlanFamily(existingTask.agent),
           }
           setSessionTools(existingTask.sessionID!, tools)
           return tools

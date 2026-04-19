@@ -90,8 +90,8 @@ export async function executeSyncContinuation(
     const tools = {
       task: allowTask,
       call_omo_agent: true,
-      question: isPlanFamily(resumeAgent),
       ...(resumeAgent ? getAgentToolRestrictions(resumeAgent) : {}),
+      question: isPlanFamily(resumeAgent),
     }
     setSessionTools(args.session_id!, tools)
 

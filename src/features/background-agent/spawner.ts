@@ -183,8 +183,8 @@ export async function startTask(
     tools: {
       task: false,
       call_omo_agent: true,
-      question: isPlanFamily(normalizedAgent),
       ...getAgentToolRestrictions(normalizedAgent),
+      question: isPlanFamily(normalizedAgent),
     },
     parts: [createInternalAgentTextPart(input.prompt)],
   }
@@ -293,8 +293,8 @@ export async function resumeTask(
     tools: {
       task: false,
       call_omo_agent: true,
-      question: isPlanFamily(task.agent),
       ...getAgentToolRestrictions(task.agent),
+      question: isPlanFamily(task.agent),
     },
     parts: [createInternalAgentTextPart(input.prompt)],
   }

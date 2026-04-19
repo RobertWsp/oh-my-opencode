@@ -68,13 +68,13 @@ export async function sendSyncPrompt(
   const allowTask = isPlanFamily(input.agentToUse)
   const tddEnabled = input.sisyphusAgentConfig?.tdd
   const effectivePrompt = buildTaskPrompt(input.args.prompt, input.agentToUse, tddEnabled)
-  // Interview-capable agents (plan family) must have question tool to clarify
-  // briefs. Other subagents can't block on user input.
+  // Plan-family question must come AFTER restrictions so agent-level deny
+  // rules cannot silently override Interview Mode.
   const tools = {
     task: allowTask,
     call_omo_agent: true,
-    question: isPlanFamily(input.agentToUse),
     ...getAgentToolRestrictions(input.agentToUse),
+    question: isPlanFamily(input.agentToUse),
   }
   setSessionTools(input.sessionID, tools)
 
