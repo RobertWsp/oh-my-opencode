@@ -669,7 +669,7 @@ describe("executeSyncContinuation - toast cleanup error paths", () => {
     expect(promptAsyncCalls[0]?.body.tools).toEqual({
       task: true,
       call_omo_agent: true,
-      question: false,
+      question: true,
     })
   })
 })

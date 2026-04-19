@@ -2,6 +2,7 @@ import type { BackgroundTask, LaunchInput, ResumeInput } from "./types"
 import type { OpencodeClient, OnSubagentSessionCreated, QueueItem } from "./constants"
 import { TMUX_CALLBACK_DELAY_MS } from "./constants"
 import { log, getAgentToolRestrictions, promptWithModelSuggestionRetry, createInternalAgentTextPart } from "../../shared"
+import { isPlanFamily } from "../../tools/delegate-task/constants"
 import { applySessionPromptParams } from "../../shared/session-prompt-params-helpers"
 import { subagentSessions } from "../claude-code-session-state"
 import { getTaskToastManager } from "../task-toast-manager"
@@ -182,7 +183,7 @@ export async function startTask(
     tools: {
       task: false,
       call_omo_agent: true,
-      question: false,
+      question: isPlanFamily(normalizedAgent),
       ...getAgentToolRestrictions(normalizedAgent),
     },
     parts: [createInternalAgentTextPart(input.prompt)],
@@ -292,7 +293,7 @@ export async function resumeTask(
     tools: {
       task: false,
       call_omo_agent: true,
-      question: false,
+      question: isPlanFamily(task.agent),
       ...getAgentToolRestrictions(task.agent),
     },
     parts: [createInternalAgentTextPart(input.prompt)],

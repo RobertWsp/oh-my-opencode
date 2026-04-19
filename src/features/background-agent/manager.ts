@@ -1,6 +1,7 @@
 
 import type { PluginInput } from "@opencode-ai/plugin"
 import { isAgentNotFoundError, FALLBACK_AGENT, buildFallbackBody } from "./spawner"
+import { isPlanFamily } from "../../tools/delegate-task/constants"
 import type {
   BackgroundTask,
   LaunchInput,
@@ -576,7 +577,7 @@ export class BackgroundManager {
         const tools = {
           task: false,
           call_omo_agent: true,
-          question: false,
+          question: isPlanFamily(input.agent),
           ...getAgentToolRestrictions(input.agent),
         }
         setSessionTools(sessionID, tools)
@@ -885,7 +886,7 @@ export class BackgroundManager {
           const tools = {
             task: false,
             call_omo_agent: true,
-            question: false,
+            question: isPlanFamily(existingTask.agent),
             ...getAgentToolRestrictions(existingTask.agent),
           }
           setSessionTools(existingTask.sessionID!, tools)

@@ -16,7 +16,7 @@ bunDescribe("sendSyncPrompt", () => {
     clearSessionPromptParams("test-session")
   })
 
-  bunTest("passes question=false via tools parameter", async () => {
+  bunTest("passes question=false for non-plan-family subagents", async () => {
     //#given
     const { sendSyncPrompt } = require("./sync-prompt-sender")
 
@@ -53,6 +53,46 @@ bunDescribe("sendSyncPrompt", () => {
     //#then
     bunExpect(promptAsync).toHaveBeenCalled()
     bunExpect(promptArgs.body.tools.question).toBe(false)
+  })
+
+  bunTest("enables question tool for plan-family subagents (prometheus)", async () => {
+    //#given
+    const { sendSyncPrompt } = require("./sync-prompt-sender")
+
+    let promptArgs: any
+    const promptAsync = bunMock(async (input: any) => {
+      promptArgs = input
+      return { data: {} }
+    })
+
+    const mockClient = {
+      session: {
+        promptAsync,
+      },
+    }
+
+    const input = {
+      sessionID: "test-session",
+      agentToUse: "prometheus",
+      args: {
+        description: "plan auth refactor",
+        prompt: "[AUTO_PLANNING_GATE_FORWARDED_REQUEST] refactor auth",
+        run_in_background: false,
+        load_skills: [],
+      },
+      systemContent: undefined,
+      categoryModel: undefined,
+      toastManager: null,
+      taskId: undefined,
+    }
+
+    //#when
+    await sendSyncPrompt(mockClient, input)
+
+    //#then
+    bunExpect(promptAsync).toHaveBeenCalled()
+    bunExpect(promptArgs.body.tools.question).toBe(true)
+    bunExpect(promptArgs.body.tools.task).toBe(true)
   })
 
   bunTest("applies agent tool restrictions for explore agent", async () => {

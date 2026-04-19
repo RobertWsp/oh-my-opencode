@@ -8,7 +8,7 @@ import { resolveCallID } from "./resolve-call-id"
 import { formatDetailedError } from "./error-formatting"
 import { getSessionTools } from "../../shared/session-tools-store"
 import { SessionCategoryRegistry } from "../../shared/session-category-registry"
-import { QUESTION_DENIED_SESSION_PERMISSION } from "../../shared/question-denied-session-permission"
+import { getSubagentSessionPermissions } from "../../shared/question-denied-session-permission"
 import { setSessionFallbackChain } from "../../hooks/model-fallback/hook"
 import { stripAgentListSortPrefix } from "../../shared/agent-display-names"
 
@@ -79,7 +79,7 @@ export async function executeBackgroundTask(
       skills: args.load_skills.length > 0 ? args.load_skills : undefined,
       skillContent: systemContent,
       category: args.category,
-      sessionPermission: QUESTION_DENIED_SESSION_PERMISSION,
+      sessionPermission: getSubagentSessionPermissions(normalizedAgent),
     })
 
     // OpenCode TUI's `Task` tool UI calculates toolcalls by looking up
