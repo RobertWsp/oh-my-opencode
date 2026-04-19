@@ -133,6 +133,23 @@ export async function pollSyncSession(
       continue
     }
 
+    const hasAssistantMessage = messages.some((m) => m.info?.role === "assistant")
+    if (
+      pollCount >= syncTiming.STALL_DETECT_POLL_COUNT &&
+      !sessionStatus &&
+      !hasAssistantMessage
+    ) {
+      log("[task] Subagent stalled - no dispatch detected, fast-fail", {
+        sessionID: input.sessionID,
+        pollCount,
+        messageCount: messages.length,
+        agentToUse: input.agentToUse,
+      })
+      abortSyncSession(client, input.sessionID, "stall_no_dispatch")
+      if (input.toastManager && input.taskId) input.toastManager.removeTask(input.taskId)
+      return `Subagent never started processing (stalled at ${pollCount * syncTiming.POLL_INTERVAL_MS / 1000}s, 0 assistant messages). Likely causes: fork /prompt_async silenced an error, agent '${input.agentToUse}' failed to resolve, or model unavailable. Session ID: ${input.sessionID}`
+    }
+
     if (input.anchorMessageCount !== undefined && messages.length <= input.anchorMessageCount) {
       continue
     }
