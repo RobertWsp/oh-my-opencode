@@ -2,8 +2,10 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test"
 import {
   isMeridianAuthError,
   isMeridianQuotaError,
+  isMeridianSubscriptionError,
   tryReassignMeridianProfile,
   tryReassignMeridianProfileWithReason,
+  tryRecoverMeridianAuth,
 } from "./meridian-auth-recovery"
 
 describe("meridian-auth-recovery", () => {
@@ -61,6 +63,58 @@ describe("meridian-auth-recovery", () => {
       expect(isMeridianAuthError(undefined)).toBe(false)
       expect(isMeridianAuthError({})).toBe(false)
       expect(isMeridianAuthError("")).toBe(false)
+    })
+
+    test("does NOT classify 'organization does not have access' as auth (subscription issue)", () => {
+      expect(
+        isMeridianAuthError({
+          message:
+            "Claude Code returned an error result: Your organization does not have access to Claude. Please login again or contact your administrator.",
+        }),
+      ).toBe(false)
+    })
+  })
+
+  describe("isMeridianSubscriptionError", () => {
+    test("detects 'organization does not have access'", () => {
+      expect(
+        isMeridianSubscriptionError({
+          message:
+            "Your organization does not have access to Claude. Please login again or contact your administrator.",
+        }),
+      ).toBe(true)
+    })
+
+    test("detects 'no active subscription'", () => {
+      expect(
+        isMeridianSubscriptionError({ message: "No active Claude subscription on this account" }),
+      ).toBe(true)
+    })
+
+    test("detects 'contact your administrator'", () => {
+      expect(
+        isMeridianSubscriptionError({
+          message: "Access denied. Please contact your administrator.",
+        }),
+      ).toBe(true)
+    })
+
+    test("does NOT classify plain auth-expired as subscription", () => {
+      expect(
+        isMeridianSubscriptionError({ message: "Claude authentication expired" }),
+      ).toBe(false)
+    })
+
+    test("does NOT classify rate-limit as subscription", () => {
+      expect(
+        isMeridianSubscriptionError({ message: "429 too many requests" }),
+      ).toBe(false)
+    })
+
+    test("handles null/empty gracefully", () => {
+      expect(isMeridianSubscriptionError(null)).toBe(false)
+      expect(isMeridianSubscriptionError({})).toBe(false)
+      expect(isMeridianSubscriptionError("")).toBe(false)
     })
   })
 
@@ -157,5 +211,164 @@ describe("meridian-auth-recovery", () => {
     test("does NOT misclassify generic 500 as quota", () => {
       expect(isMeridianQuotaError({ message: "internal server error 500" })).toBe(false)
     })
+  })
+})
+
+import { classifyQuotaKind, parseResetAt } from "./meridian-auth-recovery"
+
+describe("Claude Code CLI subscription-cap error", () => {
+  test("'hit your limit' classifies as quota", () => {
+    expect(isMeridianQuotaError({ message: "You've hit your limit · resets 5pm (America/Sao_Paulo)" })).toBe(true)
+  })
+
+  test("'you've hit' also matches", () => {
+    expect(isMeridianQuotaError({ message: "You've hit your session cap. Please wait." })).toBe(true)
+  })
+
+  test("weekly kind", () => {
+    expect(classifyQuotaKind({ message: "weekly usage limit exceeded" })).toBe("weekly")
+  })
+
+  test("5h kind for hit-your-limit", () => {
+    expect(classifyQuotaKind({ message: "You've hit your limit · resets 5pm (America/Sao_Paulo)" })).toBe("5h")
+  })
+
+  test("non-quota returns null", () => {
+    expect(classifyQuotaKind({ message: "some random error" })).toBe(null)
+  })
+})
+
+describe("parseResetAt", () => {
+  test("parses '5pm (America/Sao_Paulo)'", () => {
+    const now = new Date("2026-04-17T16:30:00-03:00").getTime() // 19:30 UTC
+    const reset = parseResetAt("You've hit your limit · resets 5pm (America/Sao_Paulo)", now)
+    expect(reset).not.toBeNull()
+    // 5pm São Paulo = 20:00 UTC. Should be today 20:00 UTC.
+    const d = new Date(reset!)
+    expect(d.getUTCHours()).toBe(20)
+    expect(d.getUTCMinutes()).toBe(0)
+  })
+
+  test("parses '11am' without tz (uses local)", () => {
+    const now = Date.now()
+    const reset = parseResetAt("resets at 11am", now)
+    expect(reset).not.toBeNull()
+    expect(reset! > now).toBe(true)
+  })
+
+  test("parses '5:30pm'", () => {
+    const now = new Date("2026-04-17T10:00:00-03:00").getTime()
+    const reset = parseResetAt("resets 5:30pm (America/Sao_Paulo)", now)
+    expect(reset).not.toBeNull()
+    const d = new Date(reset!)
+    expect(d.getUTCMinutes()).toBe(30)
+  })
+
+  test("pushes to tomorrow if time is in the past today", () => {
+    const now = new Date("2026-04-17T23:00:00-03:00").getTime() // 11pm
+    const reset = parseResetAt("resets 5pm (America/Sao_Paulo)", now)
+    expect(reset).not.toBeNull()
+    expect(reset! > now).toBe(true)
+    expect(reset! - now).toBeLessThan(24 * 60 * 60 * 1000 + 1000)
+  })
+
+  test("returns null when no reset pattern present", () => {
+    expect(parseResetAt("generic error")).toBeNull()
+  })
+})
+
+describe("tryRecoverMeridianAuth (refresh-first)", () => {
+  type Reg = {
+    __meridianReassign?: (sessionID: string, reason?: string) => string | null
+    __meridianProfileStatus?: () => {
+      profiles: string[]
+      cooldowns: Array<{ profile: string; until: number; reason: string }>
+      sessionAffinity: number
+    }
+    __meridianRefreshProfile?: (profile: string) => Promise<boolean>
+  }
+  const reg = globalThis as unknown as Reg
+
+  beforeEach(() => {
+    delete reg.__meridianRefreshProfile
+    delete reg.__meridianProfileStatus
+    delete reg.__meridianReassign
+  })
+
+  afterEach(() => {
+    delete reg.__meridianRefreshProfile
+    delete reg.__meridianProfileStatus
+    delete reg.__meridianReassign
+  })
+
+  test("returns 'refreshed' when refresh succeeds on an auth_expired profile", async () => {
+    const refreshed: string[] = []
+    reg.__meridianProfileStatus = () => ({
+      profiles: ["main", "alt4"],
+      cooldowns: [{ profile: "alt4", until: Date.now() + 60_000, reason: "auth_expired" }],
+      sessionAffinity: 1,
+    })
+    reg.__meridianRefreshProfile = async (profile: string) => {
+      refreshed.push(profile)
+      return true
+    }
+    reg.__meridianReassign = () => {
+      throw new Error("should not reassign when refresh succeeds")
+    }
+
+    const result = await tryRecoverMeridianAuth("ses_1")
+    expect(result.outcome).toBe("refreshed")
+    expect(refreshed).toEqual(["alt4"])
+  })
+
+  test("falls back to reassign when refresh returns false", async () => {
+    reg.__meridianProfileStatus = () => ({
+      profiles: ["main", "alt4"],
+      cooldowns: [{ profile: "alt4", until: Date.now() + 60_000, reason: "auth_expired" }],
+      sessionAffinity: 1,
+    })
+    reg.__meridianRefreshProfile = async () => false
+    reg.__meridianReassign = (_sid, _reason) => "main"
+
+    const result = await tryRecoverMeridianAuth("ses_2")
+    expect(result.outcome).toBe("rotated")
+    expect(result.profile).toBe("main")
+  })
+
+  test("reports no_profile when refresh fails AND no alternate healthy profile", async () => {
+    reg.__meridianProfileStatus = () => ({
+      profiles: ["main"],
+      cooldowns: [{ profile: "main", until: Date.now() + 60_000, reason: "auth_expired" }],
+      sessionAffinity: 1,
+    })
+    reg.__meridianRefreshProfile = async () => false
+    reg.__meridianReassign = () => null
+
+    const result = await tryRecoverMeridianAuth("ses_3")
+    expect(result.outcome).toBe("no_profile")
+    expect(result.profile).toBeNull()
+  })
+
+  test("degrades to reassign when plugin registry not wired up (back-compat)", async () => {
+    // No refresh/status hooks exposed — older plugin versions
+    reg.__meridianReassign = () => "alt4"
+    const result = await tryRecoverMeridianAuth("ses_4")
+    expect(result.outcome).toBe("rotated")
+    expect(result.profile).toBe("alt4")
+  })
+
+  test("does not throw if refresh hook throws", async () => {
+    reg.__meridianProfileStatus = () => ({
+      profiles: ["main"],
+      cooldowns: [{ profile: "main", until: Date.now() + 60_000, reason: "auth_expired" }],
+      sessionAffinity: 1,
+    })
+    reg.__meridianRefreshProfile = async () => {
+      throw new Error("boom")
+    }
+    reg.__meridianReassign = () => "main"
+    const result = await tryRecoverMeridianAuth("ses_5")
+    // refresh threw → fell through to reassign
+    expect(result.outcome).toBe("rotated")
   })
 })

@@ -13,8 +13,34 @@ import { createSessionStatusHandler } from "./session-status-handler"
 import {
   isMeridianAuthError,
   isMeridianQuotaError,
+  tryRecoverMeridianAuth,
+  isMeridianSubscriptionError,
   tryReassignMeridianProfileWithReason,
+  classifyQuotaKind,
+  parseResetAt,
 } from "./meridian-auth-recovery"
+
+/**
+ * Best-effort: extract the textual error message from a variety of shapes
+ * the runtime may throw (string, Error, opencode error envelope).
+ */
+function stringifyError(err: unknown): string {
+  if (!err) return ""
+  if (typeof err === "string") return err
+  if (err instanceof Error) return err.message
+  if (typeof err === "object") {
+    const anyErr = err as { message?: unknown; error?: unknown; description?: unknown }
+    if (typeof anyErr.message === "string") return anyErr.message
+    if (typeof anyErr.error === "string") return anyErr.error
+    if (typeof anyErr.description === "string") return anyErr.description
+    try {
+      return JSON.stringify(err)
+    } catch {
+      return String(err)
+    }
+  }
+  return String(err)
+}
 
 export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
   const { config, pluginConfig, sessionStates, sessionLastAccess, sessionRetryInFlight, sessionAwaitingFallbackResult, sessionFallbackTimeouts, sessionStatusRetryKeys } = deps
@@ -172,13 +198,83 @@ export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
     // may still have budget. Falls through to model fallback if reassign
     // fails or no healthy profile remains.
     let state = sessionStates.get(sessionID)
-    const meridianReason = isMeridianAuthError(error)
-      ? "auth_expired"
-      : isMeridianQuotaError(error)
-        ? "weekly_limit"
-        : null
+    const quotaKind = classifyQuotaKind(error)
+    const errText = stringifyError(error)
+    const resetAt = quotaKind ? parseResetAt(errText) : null
+    // Forward resetAt to the AccountPool so the sidebar can show "resets in 4h"
+    // with the real reset time instead of a generic 5-minute cooldown.
+    if (quotaKind) {
+      try {
+        const reg = globalThis as unknown as {
+          __accountPoolMarkSessionLimit?: (
+            providerID: string,
+            accountIndex: number,
+            kind: "5h" | "weekly",
+            resetAt: number,
+          ) => void
+          __accountPoolActive?: (providerID: string) => number | null
+        }
+        if (resetAt && typeof reg.__accountPoolMarkSessionLimit === "function") {
+          const activeIdx = reg.__accountPoolActive?.("anthropic") ?? 0
+          reg.__accountPoolMarkSessionLimit("anthropic", activeIdx, quotaKind, resetAt)
+        }
+      } catch (err) {
+        log(`[${HOOK_NAME}] failed to mark session limit on pool`, { error: String(err) })
+      }
+    }
+    const meridianReason = isMeridianSubscriptionError(error)
+      ? "no_subscription"
+      : isMeridianAuthError(error)
+        ? "auth_expired"
+        : quotaKind === "weekly"
+          ? "weekly_limit"
+          : quotaKind === "5h"
+            ? "rate_limit"
+            : null
     if (meridianReason) {
-      const newProfile = tryReassignMeridianProfileWithReason(sessionID, meridianReason)
+      // Refresh-first: for auth_expired, try OAuth refresh on any
+      // auth_expired profile BEFORE rotating. Refresh is cheap
+      // (single-flight at the plugin) and recovers the common case
+      // where the access_token expired mid-session but the refresh_token
+      // is still valid. Rotating to a new profile when we could've just
+      // refreshed bleeds session affinity unnecessarily.
+      let newProfile: string | null = null
+      if (meridianReason === "auth_expired") {
+        const recovery = await tryRecoverMeridianAuth(sessionID)
+        if (recovery.outcome === "refreshed") {
+          // Profile was refreshed in place; pick() will select it again.
+          // Retry with the same sessionID — no reassign needed.
+          const retryModel = state?.originalModel ?? resolveFallbackBootstrapModel({
+            sessionID,
+            source: `meridian-auth-refresh-recovery`,
+            eventModel: props?.model as string | undefined,
+            resolvedAgent,
+            pluginConfig,
+          })
+          if (retryModel) {
+            log(`[${HOOK_NAME}] Retrying after Meridian OAuth refresh (no rotation)`, {
+              sessionID,
+              retryModel,
+            })
+            if (!state) {
+              state = createFallbackState(retryModel)
+              sessionStates.set(sessionID, state)
+            }
+            sessionLastAccess.set(sessionID, Date.now())
+            await helpers.autoRetryWithFallback(
+              sessionID,
+              retryModel,
+              resolvedAgent,
+              `meridian-auth-refresh-recovery`,
+            )
+            return
+          }
+        }
+        newProfile = recovery.profile
+      }
+      if (!newProfile) {
+        newProfile = tryReassignMeridianProfileWithReason(sessionID, meridianReason)
+      }
       if (newProfile) {
         const retryModel = state?.originalModel ?? resolveFallbackBootstrapModel({
           sessionID,
